@@ -1,0 +1,30 @@
+{
+  "name": "pscbot",
+  "version": "1.0.0",
+  "description": "WhatsApp chatbot for maritime vessel PSC (Port State Control) data queries using Twilio, Claude AI, and Netlify serverless functions",
+  "main": "index.js",
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod",
+    "test": "node test-setup.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "chatbot",
+    "twilio",
+    "claude-ai",
+    "netlify",
+    "serverless",
+    "maritime",
+    "vessel",
+    "psc"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "2.6.7"
+  },
+  "devDependencies": {
+    "netlify-cli": "17.0.0"
+  }
+}
