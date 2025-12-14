@@ -1,16 +1,12 @@
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 // File storage directory (Netlify serverless functions have /tmp available)
 const TEMP_DIR = '/tmp';
-const FILE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
-
-// Clean up old files on function start
-cleanupOldFiles();
 
 /**
+ * Netlify serverless function handler
  * @param {any} event
  */
 exports.handler = async (event) => {
@@ -24,12 +20,23 @@ exports.handler = async (event) => {
 
   try {
     // Parse request body
-    let vesselData;
+    let requestData;
     if (typeof event.body === 'string') {
-      vesselData = JSON.parse(event.body);
+      requestData = JSON.parse(event.body);
     } else {
-      vesselData = event.body;
+      requestData = event.body;
     }
+
+    if (!requestData) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Missing request data' }),
+      };
+    }
+
+    const vesselData = requestData.vesselData || requestData;
+    const recommendationsData = requestData.recommendationsData || vesselData.recommendationsData || {};
 
     if (!vesselData) {
       return {
@@ -40,10 +47,12 @@ exports.handler = async (event) => {
     }
 
     // Generate Excel file
-    const excelBuffer = await generateExcelFile(vesselData);
+    const excelBuffer = await generateExcelFile(vesselData, recommendationsData);
 
-    // Save to temporary file
-    const filename = `vessel_recommendations_${vesselData.imo || vesselData.name || 'unknown'}_${Date.now()}.xlsx`;
+    // Extract IMO for filename
+    const imo = vesselData.imo || vesselData.imoNumber || 'unknown';
+    const timestamp = Date.now();
+    const filename = `recommendations_${imo}_${timestamp}.xlsx`;
     const filepath = path.join(TEMP_DIR, filename);
     
     // Ensure temp directory exists
@@ -51,31 +60,20 @@ exports.handler = async (event) => {
       fs.mkdirSync(TEMP_DIR, { recursive: true });
     }
 
+    // Save file
     fs.writeFileSync(filepath, /** @type {any} */ (excelBuffer), 'binary');
 
     // Generate download URL
-    // In production, upload to S3/cloud storage and generate signed URL
-    // For now, return a function endpoint that serves the file
-    const fileId = crypto.randomBytes(16).toString('hex');
     const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://your-site.netlify.app';
-    const downloadUrl = `${baseUrl}/.netlify/functions/download-excel?file=${encodeURIComponent(filename)}&id=${fileId}`;
-
-    // Store file metadata (in production, use Redis or database)
-    // For now, we'll use a simple in-memory store or file-based metadata
-    storeFileMetadata(filename, fileId, filepath);
-
-    // Clean up old files periodically
-    cleanupOldFiles();
+    const downloadUrl = `${baseUrl}/.netlify/functions/download-excel?file=${encodeURIComponent(filename)}`;
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
-        filename,
-        downloadUrl,
-        expiresIn: '5 minutes',
-        message: 'Excel file generated successfully',
+        filename: filename,
+        downloadUrl: downloadUrl,
       }),
     };
   } catch (error) {
@@ -93,78 +91,111 @@ exports.handler = async (event) => {
 };
 
 /**
+ * Generate Excel file with all sheets
  * @param {any} vesselData
+ * @param {any} recommendationsData
  */
-async function generateExcelFile(vesselData) {
+async function generateExcelFile(vesselData, recommendationsData) {
   const workbook = new ExcelJS.Workbook();
   
-  // Extract data
-  const vesselName = vesselData.name || 'Unknown Vessel';
-  const imo = vesselData.imo || 'N/A';
+  // Extract vessel data
+  const vesselName = vesselData.name || vesselData.vesselName || 'Unknown Vessel';
+  const imo = vesselData.imo || vesselData.imoNumber || 'N/A';
   const riskScore = vesselData.riskScore || vesselData.risk_score || 'N/A';
   const riskLevel = vesselData.riskLevel || vesselData.risk_level || 'N/A';
+  const riskLabel = vesselData.riskLabel || vesselData.risk_label || riskLevel || 'N/A';
+  
+  // Extract inspection data
   const lastInspection = vesselData.lastInspection || vesselData.last_inspection || {};
-  const lastInspectionDate = lastInspection.date || lastInspection.inspectionDate || 'N/A';
-  const lastInspectionPort = lastInspection.port || lastInspection.portName || 'N/A';
+  let lastInspectionDate = 'N/A';
+  if (lastInspection.date || lastInspection.inspectionDate || lastInspection.timestamp) {
+    const dateValue = lastInspection.date || lastInspection.inspectionDate || lastInspection.timestamp;
+    if (typeof dateValue === 'number') {
+      lastInspectionDate = new Date(dateValue).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } else if (typeof dateValue === 'string') {
+      lastInspectionDate = dateValue;
+    }
+  }
+  const lastInspectionPort = lastInspection.port || lastInspection.portName || lastInspection.port_name || 'N/A';
   
-  const recommendations = vesselData.recommendationsData || vesselData.recommendations || [];
-  
-  // Group recommendations by priority
-  const critical = recommendations.filter((/** @type {any} */ r) => 
-    (r.priority || r.severity || '').toUpperCase() === 'CRITICAL' || 
-    (r.priority || r.severity || '').toUpperCase() === 'HIGH'
-  );
-  const moderate = recommendations.filter((/** @type {any} */ r) => 
-    (r.priority || r.severity || '').toUpperCase() === 'MODERATE' || 
-    (r.priority || r.severity || '').toUpperCase() === 'MEDIUM'
-  );
-  const recommended = recommendations.filter((/** @type {any} */ r) => 
-    (r.priority || r.severity || '').toUpperCase() === 'RECOMMENDED' || 
-    (r.priority || r.severity || '').toUpperCase() === 'LOW' ||
-    (!critical.includes(r) && !moderate.includes(r))
-  );
+  // Current date/time for report generation
+  const reportGenerated = new Date().toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 
-  // Sheet 1: Summary
-  const summarySheet = workbook.addWorksheet('Summary');
+  // SHEET 1: Vessel Summary
+  const summarySheet = workbook.addWorksheet('Vessel Summary');
   
-  // Summary data
-  summarySheet.addRow(['Vessel Name', vesselName]);
-  summarySheet.addRow(['IMO', imo]);
-  summarySheet.addRow(['Risk Score', riskScore]);
-  summarySheet.addRow(['Risk Level', riskLevel]);
-  summarySheet.addRow([]); // Empty row
-  summarySheet.addRow(['Last Inspection Date', lastInspectionDate]);
-  summarySheet.addRow(['Last Inspection Port', lastInspectionPort]);
-  summarySheet.addRow([]); // Empty row
-  summarySheet.addRow(['Recommendations Summary', '']);
-  summarySheet.addRow(['Critical', critical.length]);
-  summarySheet.addRow(['Moderate', moderate.length]);
-  summarySheet.addRow(['Recommended', recommended.length]);
-  summarySheet.addRow(['Total', recommendations.length]);
-
-  // Style summary sheet
-  summarySheet.getColumn(1).width = 25;
-  summarySheet.getColumn(2).width = 30;
+  // Add header row
+  summarySheet.addRow(['Field', 'Value']);
   
   // Style header row
-  summarySheet.getRow(9).font = { bold: true, color: { argb: 'FFFFFFFF' } }; // White text
-  summarySheet.getRow(9).fill = {
+  const headerRow = summarySheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: 'FF1F4E78' }, // Dark blue background
+    fgColor: { argb: 'FF1F4E78' }, // Dark blue
+  };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+  headerRow.border = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' },
   };
 
-  // Sheet 2: CRITICAL
-  const criticalSheet = workbook.addWorksheet('CRITICAL');
-  addRecommendationsSheet(criticalSheet, critical, 'FFE6E6'); // Light red
+  // Add data rows
+  summarySheet.addRow(['Vessel Name', vesselName]);
+  summarySheet.addRow(['IMO Number', imo]);
+  summarySheet.addRow(['Risk Score', riskScore]);
+  summarySheet.addRow(['Risk Level', riskLevel]);
+  summarySheet.addRow(['Risk Label', riskLabel]);
+  summarySheet.addRow(['Last Inspection Date', lastInspectionDate]);
+  summarySheet.addRow(['Last Inspection Port', lastInspectionPort]);
+  summarySheet.addRow(['Report Generated', reportGenerated]);
 
-  // Sheet 3: MODERATE
-  const moderateSheet = workbook.addWorksheet('MODERATE');
-  addRecommendationsSheet(moderateSheet, moderate, 'FFFFE6'); // Light yellow
+  // Style data rows with borders
+  for (let i = 2; i <= summarySheet.rowCount; i++) {
+    const row = summarySheet.getRow(i);
+    row.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' },
+    };
+  }
 
-  // Sheet 4: RECOMMENDED
+  // Set column widths
+  summarySheet.getColumn(1).width = 25;
+  summarySheet.getColumn(2).width = 40;
+
+  // SHEET 2: CRITICAL Recommendations
+  const criticalData = recommendationsData.CRITICAL || recommendationsData.critical || [];
+  const criticalSheet = workbook.addWorksheet('CRITICAL Recommendations');
+  addRecommendationsSheet(criticalSheet, criticalData, 'FFC7CE'); // Light red
+
+  // SHEET 3: MODERATE Recommendations
+  const moderateData = recommendationsData.MODERATE || recommendationsData.moderate || [];
+  const moderateSheet = workbook.addWorksheet('MODERATE Recommendations');
+  addRecommendationsSheet(moderateSheet, moderateData, 'FFEB9C'); // Light yellow
+
+  // SHEET 4: RECOMMENDED
+  const recommendedData = recommendationsData.RECOMMENDED || recommendationsData.recommended || [];
   const recommendedSheet = workbook.addWorksheet('RECOMMENDED');
-  addRecommendationsSheet(recommendedSheet, recommended, 'E6FFE6'); // Light green
+  addRecommendationsSheet(recommendedSheet, recommendedData, 'C6EFCE'); // Light green
+
+  // SHEET 5: Campaigns
+  const campaignsSheet = workbook.addWorksheet('Campaigns');
+  addCampaignsSheet(campaignsSheet, recommendationsData);
 
   // Generate Excel buffer
   const buffer = await workbook.xlsx.writeBuffer();
@@ -172,9 +203,10 @@ async function generateExcelFile(vesselData) {
 }
 
 /**
+ * Add recommendations sheet with styling
  * @param {any} worksheet
  * @param {any[]} recommendations
- * @param {string} rowColor
+ * @param {string} rowColor - Hex color for data rows (without #)
  */
 function addRecommendationsSheet(worksheet, recommendations, rowColor) {
   // Define columns
@@ -182,61 +214,102 @@ function addRecommendationsSheet(worksheet, recommendations, rowColor) {
     { header: 'Category', key: 'category', width: 20 },
     { header: 'Issue Type', key: 'issueType', width: 25 },
     { header: 'Campaign Trend', key: 'campaignTrend', width: 20 },
-    { header: 'General Recommendations', key: 'generalRecommendations', width: 40 },
+    { header: 'Recommendations', key: 'recommendations', width: 40 },
     { header: 'Internal Checklist', key: 'internalChecklist', width: 40 },
     { header: 'External Checklist', key: 'externalChecklist', width: 40 },
+    { header: 'General Checklist', key: 'generalChecklist', width: 40 },
   ];
 
   worksheet.columns = columns;
 
-  // Add header row
-  worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  worksheet.getRow(1).fill = {
+  // Style header row
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: 'FF1F4E78' }, // Dark blue background
+    fgColor: { argb: 'FF1F4E78' }, // Dark blue
   };
-  worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+  headerRow.border = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' },
+  };
 
   // Add data rows
-  recommendations.forEach((/** @type {any} */ rec, /** @type {number} */ index) => {
-    const row = worksheet.addRow({
-      category: rec.category || rec.type || 'General',
-      issueType: rec.issueType || rec.issue_type || rec.issueType || '',
-      campaignTrend: rec.campaignTrend || rec.campaign_trend || rec.trend || '',
-      generalRecommendations: rec.generalRecommendations || rec.general_recommendations || rec.description || rec.recommendation || rec.text || '',
-      internalChecklist: rec.internalChecklist || rec.internal_checklist || rec.internalChecklist || '',
-      externalChecklist: rec.externalChecklist || rec.external_checklist || rec.externalChecklist || '',
+  if (Array.isArray(recommendations)) {
+    recommendations.forEach((/** @type {any} */ rec) => {
+      // Handle category - could be object or string
+      let category = 'General';
+      if (typeof rec === 'string') {
+        category = rec;
+      } else if (rec.category) {
+        category = rec.category;
+      } else if (rec.name) {
+        category = rec.name;
+      }
+
+      // Parse recommendations data - could be nested object
+      const recData = typeof rec === 'object' ? rec : {};
+      
+      // Join array fields with newlines
+      const joinArray = (/** @type {any} */ arr) => {
+        if (!arr) return '';
+        if (Array.isArray(arr)) {
+          return arr.filter(item => item).join('\n');
+        }
+        return String(arr || '');
+      };
+
+      const row = worksheet.addRow({
+        category: category,
+        issueType: recData.issueType || recData.issue_type || recData.issueType || '',
+        campaignTrend: recData.campaignTrend || recData.campaign_trend || recData.trend || '',
+        recommendations: joinArray(recData.recommendations || recData.generalRecommendations || recData.general_recommendations || recData.description || recData.recommendation || recData.text),
+        internalChecklist: joinArray(recData.internalChecklist || recData.internal_checklist || recData.internalChecklist),
+        externalChecklist: joinArray(recData.externalChecklist || recData.external_checklist || recData.externalChecklist),
+        generalChecklist: joinArray(recData.generalChecklist || recData.general_checklist || recData.generalChecklist),
+      });
+
+      // Style data rows
+      row.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: rowColor },
+      };
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
     });
+  }
 
-    // Style data rows with background color
-    row.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: rowColor },
-    };
-
-    // Wrap text for long content
-    row.alignment = { vertical: 'top', wrapText: true };
-  });
-
-  // Add filters
-  worksheet.autoFilter = {
-    from: { row: 1, column: 1 },
-    to: { row: worksheet.rowCount, column: columns.length },
-  };
-
-  // Auto-adjust column widths (with min/max limits)
+  // Auto-adjust column widths
   worksheet.columns.forEach((/** @type {any} */ column) => {
     let maxLength = 0;
     column.eachCell({ includeEmpty: false }, (/** @type {any} */ cell) => {
-      const columnLength = cell.value ? cell.value.toString().length : 10;
-      if (columnLength > maxLength) {
-        maxLength = columnLength;
+      const cellValue = cell.value ? String(cell.value) : '';
+      const lines = cellValue.split('\n');
+      const maxLineLength = Math.max(...lines.map(line => line.length), 0);
+      if (maxLineLength > maxLength) {
+        maxLength = maxLineLength;
       }
     });
     column.width = Math.min(Math.max(maxLength + 2, column.width || 10), 50);
   });
+
+  // Add filters
+  if (worksheet.rowCount > 1) {
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: worksheet.rowCount, column: columns.length },
+    };
+  }
 
   // Freeze header row
   worksheet.views = [
@@ -247,88 +320,114 @@ function addRecommendationsSheet(worksheet, recommendations, rowColor) {
   ];
 }
 
-// Simple file metadata storage (in production, use Redis or database)
-const fileMetadata = new Map();
-
 /**
- * @param {string} filename
- * @param {string} fileId
- * @param {string} filepath
+ * Add campaigns sheet
+ * @param {any} worksheet
+ * @param {any} recommendationsData
  */
-function storeFileMetadata(filename, fileId, filepath) {
-  fileMetadata.set(fileId, {
-    filename,
-    filepath,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + FILE_TTL,
+function addCampaignsSheet(worksheet, recommendationsData) {
+  // Define columns
+  const columns = [
+    { header: 'Campaign Name', key: 'campaignName', width: 30 },
+    { header: 'Recommendations', key: 'recommendations', width: 60 },
+  ];
+
+  worksheet.columns = columns;
+
+  // Style header row
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF1F4E78' }, // Dark blue
+  };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+  headerRow.border = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' },
+  };
+
+  // Parse campaigns data
+  const campaigns = recommendationsData.campaigns || recommendationsData.Campaigns || [];
+  
+  if (Array.isArray(campaigns)) {
+    campaigns.forEach((/** @type {any} */ campaign) => {
+      const campaignName = campaign.name || campaign.campaignName || campaign.campaign_name || 'Unknown Campaign';
+      const recommendations = Array.isArray(campaign.recommendations) 
+        ? campaign.recommendations.filter((/** @type {any} */ item) => item).join('\n')
+        : (campaign.recommendations || campaign.description || '');
+
+      const row = worksheet.addRow({
+        campaignName: campaignName,
+        recommendations: recommendations,
+      });
+
+      // Style data rows
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+    });
+  } else if (typeof campaigns === 'object' && campaigns !== null) {
+    // Handle object format where keys are campaign names
+    Object.keys(campaigns).forEach(campaignName => {
+      const campaignData = campaigns[campaignName];
+      const recommendations = Array.isArray(campaignData) 
+        ? campaignData.filter(item => item).join('\n')
+        : (campaignData?.recommendations ? (Array.isArray(campaignData.recommendations) ? campaignData.recommendations.join('\n') : String(campaignData.recommendations)) : '');
+
+      const row = worksheet.addRow({
+        campaignName: campaignName,
+        recommendations: recommendations,
+      });
+
+      // Style data rows
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+    });
+  }
+
+  // Auto-adjust column widths
+  worksheet.columns.forEach((/** @type {any} */ column) => {
+    let maxLength = 0;
+    column.eachCell({ includeEmpty: false }, (/** @type {any} */ cell) => {
+      const cellValue = cell.value ? String(cell.value) : '';
+      const lines = cellValue.split('\n');
+      const maxLineLength = Math.max(...lines.map((/** @type {string} */ line) => line.length), 0);
+      if (maxLineLength > maxLength) {
+        maxLength = maxLineLength;
+      }
+    });
+    column.width = Math.min(Math.max(maxLength + 2, column.width || 10), 60);
   });
-}
 
-/**
- * @param {string} fileId
- */
-function getFileMetadata(fileId) {
-  const metadata = fileMetadata.get(fileId);
-  if (!metadata) return null;
-  
-  // Check if expired
-  if (Date.now() > metadata.expiresAt) {
-    // Clean up
-    if (fs.existsSync(metadata.filepath)) {
-      try {
-        fs.unlinkSync(metadata.filepath);
-      } catch (err) {
-        console.error('Error deleting expired file:', err);
-      }
-    }
-    fileMetadata.delete(fileId);
-    return null;
+  // Add filters
+  if (worksheet.rowCount > 1) {
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: worksheet.rowCount, column: columns.length },
+    };
   }
-  
-  return metadata;
+
+  // Freeze header row
+  worksheet.views = [
+    {
+      state: 'frozen',
+      ySplit: 1,
+    },
+  ];
 }
 
-function cleanupOldFiles() {
-  try {
-    if (!fs.existsSync(TEMP_DIR)) {
-      return;
-    }
-
-    const files = fs.readdirSync(TEMP_DIR);
-    const now = Date.now();
-
-    files.forEach((file) => {
-      if (file.endsWith('.xlsx')) {
-        const filepath = path.join(TEMP_DIR, file);
-        try {
-          const stats = fs.statSync(filepath);
-          const fileAge = now - stats.mtimeMs;
-
-          // Delete files older than TTL
-          if (fileAge > FILE_TTL) {
-            fs.unlinkSync(filepath);
-            console.log(`Cleaned up old file: ${file}`);
-          }
-        } catch (err) {
-          console.error(`Error checking file ${file}:`, err);
-        }
-      }
-    });
-
-    // Clean up expired metadata
-    fileMetadata.forEach((metadata, fileId) => {
-      if (Date.now() > metadata.expiresAt) {
-        fileMetadata.delete(fileId);
-      }
-    });
-  } catch (error) {
-    console.error('Error during cleanup:', error);
-  }
-}
-
-// Export helper functions for testing and external use
+// Export helper function for testing
 exports.generateExcelFile = generateExcelFile;
-exports.getFileMetadata = getFileMetadata;
-exports.cleanupOldFiles = cleanupOldFiles;
-exports.addRecommendationsSheet = addRecommendationsSheet;
-
