@@ -4,9 +4,13 @@
   "description": "WhatsApp chatbot for maritime vessel PSC (Port State Control) data queries using Twilio, Claude AI, and Netlify serverless functions",
   "main": "index.js",
   "scripts": {
+    "build": "tsc",
     "dev": "netlify dev",
     "deploy": "netlify deploy --prod",
-    "test": "node test-setup.js"
+    "test": "node test-setup.js",
+    "generate-excel": "node netlify/functions/generate-excel.js",
+    "test-excel": "node test-excel-generation.js",
+    "test-email": "node test-email-sending.js"
   },
   "keywords": [
     "whatsapp",
@@ -22,9 +26,15 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@sendgrid/mail": "^7.7.0",
+    "exceljs": "^4.4.0",
     "node-fetch": "2.6.7"
   },
   "devDependencies": {
-    "netlify-cli": "17.0.0"
+    "@types/dotenv": "^6.1.1",
+    "@types/node": "^25.0.1",
+    "@types/node-fetch": "^2.6.13",
+    "netlify-cli": "17.0.0",
+    "typescript": "^5.9.3"
   }
 }

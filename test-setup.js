@@ -30,10 +30,17 @@ const REQUIRED_ENV_VARS = [
 const OPTIONAL_ENV_VARS = ['VESSEL_API_KEY'];
 
 // Helper functions
+/**
+ * @param {string} message
+ * @param {keyof typeof colors} color
+ */
 function log(message, color = 'reset') {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
+/**
+ * @param {string} value
+ */
 function maskValue(value) {
   if (!value || value.length <= 8) return '***';
   return value.substring(0, 8) + '...';
@@ -65,7 +72,8 @@ function loadEnvFile() {
         return true;
       }
     } catch (error) {
-      log(`⚠ Warning: Could not load .env file: ${error.message}`, 'yellow');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`⚠ Warning: Could not load .env file: ${errorMessage}`, 'yellow');
       return false;
     }
   } else {
@@ -76,7 +84,9 @@ function loadEnvFile() {
 
 function checkEnvVars() {
   log('\n📋 Checking Environment Variables...', 'blue');
+  /** @type {string[]} */
   const missing = [];
+  /** @type {string[]} */
   const present = [];
 
   REQUIRED_ENV_VARS.forEach((varName) => {
@@ -102,6 +112,10 @@ function checkEnvVars() {
   return { missing, present };
 }
 
+/**
+ * @param {string} url
+ * @param {any} options
+ */
 function makeHttpsRequest(url, options = {}) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url);
@@ -109,8 +123,8 @@ function makeHttpsRequest(url, options = {}) {
       hostname: urlObj.hostname,
       port: urlObj.port || 443,
       path: urlObj.pathname + urlObj.search,
-      method: options.method || 'GET',
-      headers: options.headers || {},
+      method: (options && 'method' in options ? options.method : undefined) || 'GET',
+      headers: (options && 'headers' in options ? options.headers : undefined) || {},
     };
 
     const req = https.request(requestOptions, (res) => {
@@ -131,7 +145,7 @@ function makeHttpsRequest(url, options = {}) {
       reject(error);
     });
 
-    if (options.body) {
+    if (options && 'body' in options && options.body) {
       req.write(options.body);
     }
 
@@ -187,8 +201,9 @@ async function testAnthropicAPI() {
       return { success: false, error: `Status ${response.statusCode}` };
     }
   } catch (error) {
-    log(`  ✗ Anthropic API: Connection failed - ${error.message}`, 'red');
-    return { success: false, error: error.message };
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`  ✗ Anthropic API: Connection failed - ${errorMessage}`, 'red');
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -204,6 +219,8 @@ async function testVesselAPI() {
 
   try {
     const urlObj = new URL(apiUrl);
+    /** @type {Record<string, string>} */
+    /** @type {Record<string, string>} */
     const headers = {
       'Content-Type': 'application/json',
     };
@@ -233,16 +250,21 @@ async function testVesselAPI() {
       return { success: false, error: `Status ${response.statusCode}`, warning: true };
     }
   } catch (error) {
-    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorCode = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    if (errorCode === 'ENOTFOUND' || errorCode === 'ECONNREFUSED') {
       log(`  ✗ Vessel API: Cannot reach ${apiUrl}`, 'red');
-      log(`  Error: ${error.message}`, 'red');
+      log(`  Error: ${errorMessage}`, 'red');
     } else {
-      log(`  ⚠ Vessel API: Connection issue - ${error.message}`, 'yellow');
+      log(`  ⚠ Vessel API: Connection issue - ${errorMessage}`, 'yellow');
     }
-    return { success: false, error: error.message, warning: true };
+    return { success: false, error: errorMessage, warning: true };
   }
 }
 
+/**
+ * @param {any} results
+ */
 function printSummary(results) {
   log('\n' + '='.repeat(60), 'cyan');
   log('📊 Test Summary', 'blue');
@@ -255,7 +277,7 @@ function printSummary(results) {
     log('✓ All required environment variables are set', 'green');
   } else {
     log(`✗ Missing ${envCheck.missing.length} required environment variable(s)`, 'red');
-    envCheck.missing.forEach((varName) => {
+    envCheck.missing.forEach((/** @type {string} */ varName) => {
       log(`  - ${varName}`, 'red');
     });
   }
