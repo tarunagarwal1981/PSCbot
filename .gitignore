@@ -3,3 +3,6 @@ node_modules
 .netlify
 logs
 .DS_Store
+
+# Test output
+test/output/

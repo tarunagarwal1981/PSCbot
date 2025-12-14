@@ -1,225 +1,305 @@
 # Quick Start Guide
 
-Get your WhatsApp chatbot up and running in ~20 minutes.
+**Total Time: ~30 minutes**
 
-## Prerequisites
+Get your PSC Bot up and running in production with this speed-run guide.
 
-Before you begin, ensure you have:
+---
 
-- **Node.js** (v14 or higher) installed
-- **npm** (comes with Node.js)
-- **Git** installed
-- **Anthropic account** - [Sign up](https://console.anthropic.com/)
-- **Twilio account** - [Sign up](https://www.twilio.com/try-twilio)
-- **Netlify account** - [Sign up](https://app.netlify.com/signup)
-- **Vessel API access** - Your vessel data API endpoint and credentials
+## Prerequisites Checklist
+
+Before starting, ensure you have:
+- [ ] Node.js 18+ installed (`node --version`)
+- [ ] npm installed (`npm --version`)
+- [ ] Git installed (`git --version`)
+- [ ] Netlify account ([sign up](https://www.netlify.com/))
 
 ---
 
 ## Step 1: Get API Keys (5 minutes)
 
-### 1.1 Anthropic API Key
+### 1.1 Anthropic API Key (1 min)
+1. Go to [console.anthropic.com](https://console.anthropic.com/)
+2. Sign up or log in
+3. Navigate to **API Keys**
+4. Click **Create Key**
+5. Copy the key (starts with `sk-ant-`)
 
-1. Go to [Anthropic Console](https://console.anthropic.com/settings/keys)
-2. Click **"Create Key"**
-3. Copy your API key (starts with `sk-ant-`)
-4. Save it securely - you won't see it again
+**✅ Success:** You have a key like `sk-ant-api03-xxx...`
 
-### 1.2 Twilio Credentials
+### 1.2 SendGrid API Key (2 min)
+1. Go to [sendgrid.com](https://sendgrid.com/) and sign up
+2. Navigate to **Settings → API Keys**
+3. Click **Create API Key**
+4. Name it "PSC Bot" and select **Mail Send** permission
+5. Copy the key (starts with `SG.`)
+6. Go to **Settings → Sender Authentication**
+7. Verify your sender email address
 
-1. Go to [Twilio Console](https://console.twilio.com/)
-2. Find your **Account SID** (starts with `AC`) on the dashboard
-3. Find your **Auth Token** - click "Show" to reveal it
-4. Copy both values
+**✅ Success:** You have a key like `SG.xxx...` and verified email
+
+### 1.3 Twilio Credentials (2 min)
+1. Go to [twilio.com](https://www.twilio.com/) and sign up
+2. Navigate to **Console Dashboard**
+3. Copy **Account SID** (starts with `AC`)
+4. Copy **Auth Token** (click to reveal)
+5. Go to **Messaging → Try it out → Send a WhatsApp message**
+6. Note your **WhatsApp Sandbox** number and join code
+
+**✅ Success:** You have Account SID, Auth Token, and WhatsApp sandbox info
 
 ---
 
-## Step 2: Join WhatsApp Sandbox (3 minutes)
+## Step 2: Prepare Vessel Data (2 minutes)
 
-1. Go to [Twilio WhatsApp Sandbox](https://console.twilio.com/us1/develop/sms/sandbox)
-2. You'll see a code like: **join [random-word]**
-3. Send this exact message to **+1 415 523 8886** from your WhatsApp
-4. Wait for confirmation: *"You're all set! You can start sending messages to this number."*
+### 2.1 Clone Repository
+```bash
+git clone <your-repo-url>
+cd PSCbot
+```
 
-**Note:** Sandbox allows testing with up to 5 verified numbers.
+**✅ Success:** You're in the `PSCbot` directory
 
----
-
-## Step 3: Deploy to Netlify (7 minutes)
-
-### Option A: Using Netlify CLI (Recommended)
+### 2.2 Add Vessel Mappings
+Edit `data/vessel-mappings.csv`:
 
 ```bash
-# Install Netlify CLI globally (if not already installed)
+nano data/vessel-mappings.csv
+```
+
+Add your vessels (format: `vessel_name,imo`):
+```csv
+vessel_name,imo
+GCL YAMUNA,9481219
+GCL TAPI,9481659
+GCL GANGA,9481697
+```
+
+**✅ Success:** CSV file has at least one vessel entry
+
+---
+
+## Step 3: Deploy to Netlify (10 minutes)
+
+### 3.1 Install Dependencies (1 min)
+```bash
+npm install
+```
+
+**✅ Success:** No errors, `node_modules/` created
+
+### 3.2 Install Netlify CLI (1 min)
+```bash
 npm install -g netlify-cli
-
-# Login to Netlify
-netlify login
-
-# Initialize and deploy
-netlify init
-# Follow prompts:
-# - Create & configure a new site
-# - Team: Select your team
-# - Site name: (or press Enter for auto-generated)
-# - Build command: npm run build (or leave empty)
-# - Directory to deploy: public (or leave empty)
-
-# Deploy to production
-npm run deploy
 ```
 
-### Option B: Using Netlify Web UI
+**✅ Success:** `netlify --version` shows version number
 
-1. Push your code to **GitHub/GitLab/Bitbucket**
-2. Go to [Netlify Dashboard](https://app.netlify.com/)
-3. Click **"Add new site"** → **"Import an existing project"**
-4. Connect your repository
-5. Configure build settings:
-   - **Build command:** `npm run build` (or leave empty)
-   - **Publish directory:** `public` (or leave empty)
-6. Click **"Deploy site"**
-
----
-
-## Step 4: Configure Environment Variables (3 minutes)
-
-### In Netlify Dashboard:
-
-1. Go to your site → **Site settings** → **Environment variables**
-2. Add each variable:
-
-```
-ANTHROPIC_API_KEY = sk-ant-your-key-here
-TWILIO_ACCOUNT_SID = ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN = your-auth-token-here
-VESSEL_API_URL = https://your-api-endpoint.com/vessels
-VESSEL_API_KEY = your-vessel-api-key (if required)
-```
-
-3. Click **"Save"**
-
-### For Local Development:
-
+### 3.3 Login to Netlify (1 min)
 ```bash
-# Copy example file
-cp .env.example .env
-
-# Edit .env and add your values
-# Use your preferred text editor
+netlify login
 ```
+
+**✅ Success:** Browser opens, you're logged in, terminal shows "Logged in as..."
+
+### 3.4 Initialize Project (2 min)
+```bash
+netlify init
+```
+
+**Options:**
+- **Create & configure a new site** → Yes
+- **Team:** Select your team
+- **Site name:** `pscbot` (or your choice)
+- **Build command:** `npm run build` (or press Enter)
+- **Directory to deploy:** `public` (or press Enter)
+- **Functions folder:** `netlify/functions`
+
+**✅ Success:** Site created, `.netlify/` directory exists
+
+### 3.5 Set Environment Variables (3 min)
+
+**Option A: Via CLI (Recommended)**
+```bash
+netlify env:set ANTHROPIC_API_KEY "sk-ant-xxx"
+netlify env:set TWILIO_ACCOUNT_SID "ACxxx"
+netlify env:set TWILIO_AUTH_TOKEN "xxx"
+netlify env:set VESSEL_API_URL "https://api.example.com/vessels"
+netlify env:set SENDGRID_API_KEY "SG.xxx"
+netlify env:set SENDER_EMAIL "reports@yourdomain.com"
+netlify env:set SENDER_NAME "KIVAAN Vessel Intelligence"
+```
+
+**Option B: Via Dashboard**
+1. Go to [app.netlify.com](https://app.netlify.com/)
+2. Select your site → **Site settings** → **Environment variables**
+3. Add each variable:
+   - `ANTHROPIC_API_KEY`
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN`
+   - `VESSEL_API_URL`
+   - `SENDGRID_API_KEY`
+   - `SENDER_EMAIL`
+   - `SENDER_NAME`
+
+**✅ Success:** All 7 variables set (verify with `netlify env:list`)
+
+### 3.6 Deploy to Production (2 min)
+```bash
+netlify deploy --prod
+```
+
+**Expected Output:**
+```
+Deploying to main site URL...
+✔ Finished hashing
+✔ CDN requesting 0 files
+✔ Finished uploading 0 files
+✔ Deploy log is https://app.netlify.com/...
+
+Website URL: https://your-site.netlify.app
+```
+
+**✅ Success:** Deployment completes, you have a website URL
+
+### 3.7 Get Function URL (1 min)
+Your webhook URL will be:
+```
+https://your-site.netlify.app/.netlify/functions/whatsapp-webhook
+```
+
+**✅ Success:** You have the full webhook URL copied
 
 ---
 
-## Step 5: Configure Twilio Webhook (2 minutes)
+## Step 4: Configure Twilio (5 minutes)
 
-1. Go to [Twilio Console](https://console.twilio.com/) → **Messaging** → **Try it out** → **Send a WhatsApp message**
-2. Or go to [WhatsApp Sandbox](https://console.twilio.com/us1/develop/sms/sandbox)
-3. Find **"A MESSAGE COMES IN"** webhook field
-4. Enter your Netlify function URL:
+### 4.1 Join WhatsApp Sandbox (1 min)
+1. Open WhatsApp on your phone
+2. Send message to Twilio's WhatsApp number: `join <your-sandbox-code>`
+3. Wait for confirmation: "You're all set!"
+
+**✅ Success:** You receive confirmation message
+
+### 4.2 Set Webhook URL (2 min)
+1. Go to [console.twilio.com](https://console.twilio.com/)
+2. Navigate to **Messaging → Try it out → Send a WhatsApp message**
+3. Find **When a message comes in** field
+4. Enter your webhook URL:
    ```
-   https://your-site-name.netlify.app/.netlify/functions/whatsapp-webhook
+   https://your-site.netlify.app/.netlify/functions/whatsapp-webhook
    ```
-   Or if you set up redirects:
-   ```
-   https://your-site-name.netlify.app/api/whatsapp-webhook
-   ```
-5. Set method to **POST**
-6. Click **"Save"**
+5. Set **HTTP method:** `POST`
+6. Click **Save**
+
+**✅ Success:** Webhook URL saved, shows green checkmark
+
+### 4.3 Verify Configuration (2 min)
+1. In Twilio console, check webhook is set correctly
+2. Note your WhatsApp sandbox number (format: `whatsapp:+14155238886`)
+
+**✅ Success:** Webhook URL matches your Netlify function URL
 
 ---
 
-## Step 6: Test Your Bot (2 minutes)
+## Step 5: Test the Bot (5 minutes)
 
-Send these test messages to your Twilio WhatsApp number:
-
-### Basic Queries:
+### 5.1 Test Risk Score Query (1 min)
+Send via WhatsApp:
 ```
-What is the risk score for vessel ABC?
-```
-
-```
-Show me risk level for IMO 1234567
+What is the risk score for GCL YAMUNA?
 ```
 
+**✅ Success:** Bot responds with risk score analysis
+
+### 5.2 Test Recommendations Query (2 min)
+Send via WhatsApp:
 ```
-Get recommendations for vessel XYZ
+Recommendations for GCL YAMUNA
 ```
 
-### Advanced Queries:
+Then reply with:
 ```
-What is the risk breakdown for vessel ABC?
-```
-
-```
-Show inspection info for IMO 9876543
+1
 ```
 
+**✅ Success:** Bot sends download link for Excel file
+
+### 5.3 Test Partial Name Match (1 min)
+Send via WhatsApp:
 ```
-Get PSC trends for vessel XYZ
+YAMUNA risk level
 ```
 
-### Expected Response:
-The bot should respond with formatted information about the vessel, including risk scores, recommendations, or other requested data.
+**✅ Success:** Bot finds vessel and returns risk level
+
+### 5.4 Verify Logs (1 min)
+```bash
+netlify functions:log whatsapp-webhook --tail
+```
+
+**✅ Success:** You see function invocations and no errors
 
 ---
 
 ## Troubleshooting
 
-### Bot not responding?
-- ✅ Check Netlify function logs: **Site** → **Functions** → **whatsapp-webhook** → **Logs**
-- ✅ Verify webhook URL in Twilio is correct
-- ✅ Ensure all environment variables are set in Netlify
-- ✅ Test locally: `npm run dev` and use ngrok to expose localhost
+### Bot Not Responding?
+1. Check webhook URL in Twilio matches Netlify function URL
+2. Verify environment variables: `netlify env:list`
+3. Check logs: `netlify functions:log whatsapp-webhook --tail`
 
-### "Server misconfiguration" error?
-- ✅ Run `npm test` to verify environment variables
-- ✅ Check all required env vars are set in Netlify
-- ✅ Verify API keys are correct (not expired)
+### "Vessel not found" Error?
+1. Verify vessel exists in `data/vessel-mappings.csv`
+2. Check CSV format: `vessel_name,imo` (no spaces)
+3. Ensure vessel name matches exactly (case-insensitive)
 
-### API connection errors?
-- ✅ Test Anthropic API: Check key at [Anthropic Console](https://console.anthropic.com/settings/keys)
-- ✅ Test Vessel API: Verify URL and authentication
-- ✅ Check function logs for detailed error messages
+### Excel Download Fails?
+1. Check function logs: `netlify functions:log download-excel`
+2. Verify file hasn't expired (10 minute limit)
+3. Try generating again
 
-### Local development issues?
-```bash
-# Verify setup
-npm test
-
-# Start local dev server
-npm run dev
-
-# Check function at: http://localhost:8888/.netlify/functions/whatsapp-webhook
-```
+### Email Not Sending?
+1. Verify SendGrid API key is correct
+2. Check sender email is verified in SendGrid
+3. Set `DEFAULT_RECIPIENT_EMAIL` in environment variables
 
 ---
 
 ## Next Steps
 
-- **Customize intents:** Edit `netlify/functions/whatsapp-webhook.js` to add new intents
-- **Improve responses:** Adjust Claude prompts for better formatting
-- **Add features:** Extend vessel API integration
-- **Production:** Move from sandbox to production Twilio WhatsApp API
+- **Monitor Usage:** `netlify functions:log --tail`
+- **View Dashboard:** [app.netlify.com](https://app.netlify.com/)
+- **Read Full Docs:** See [README.md](./README.md)
+- **Customize:** Edit vessel mappings, add more vessels
 
 ---
 
-## Time Breakdown
+## Quick Reference
 
-- Step 1: Get API Keys → **5 minutes**
-- Step 2: Join WhatsApp Sandbox → **3 minutes**
-- Step 3: Deploy to Netlify → **7 minutes**
-- Step 4: Configure Environment Variables → **3 minutes**
-- Step 5: Configure Twilio Webhook → **2 minutes**
-- Step 6: Test Your Bot → **2 minutes**
+**Function URLs:**
+- Webhook: `https://your-site.netlify.app/.netlify/functions/whatsapp-webhook`
+- Generate Excel: `https://your-site.netlify.app/.netlify/functions/generate-excel`
+- Download Excel: `https://your-site.netlify.app/.netlify/functions/download-excel`
+- Send Email: `https://your-site.netlify.app/.netlify/functions/send-email`
 
-**Total: ~22 minutes**
+**Useful Commands:**
+```bash
+# View logs
+netlify functions:log whatsapp-webhook --tail
+
+# List environment variables
+netlify env:list
+
+# Redeploy
+netlify deploy --prod
+
+# Open site dashboard
+netlify open
+```
 
 ---
 
-## Support
+**🎉 Congratulations!** Your PSC Bot is now live and ready to use.
 
-- **Netlify Docs:** [netlify.com/docs](https://docs.netlify.com/)
-- **Twilio WhatsApp:** [twilio.com/docs/whatsapp](https://www.twilio.com/docs/whatsapp)
-- **Anthropic API:** [docs.anthropic.com](https://docs.anthropic.com/)
-
+**Total Time:** ~30 minutes

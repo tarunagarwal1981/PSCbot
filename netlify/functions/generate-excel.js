@@ -10,7 +10,10 @@ const TEMP_DIR = '/tmp';
  * @param {any} event
  */
 exports.handler = async (event) => {
+  console.log('[generate-excel] Request received', { method: event.httpMethod });
+
   if (event.httpMethod !== 'POST') {
+    console.warn('[generate-excel] Invalid method', { method: event.httpMethod });
     return {
       statusCode: 405,
       headers: { 'Content-Type': 'application/json' },
@@ -28,6 +31,7 @@ exports.handler = async (event) => {
     }
 
     if (!requestData) {
+      console.warn('[generate-excel] Missing request data');
       return {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -37,8 +41,11 @@ exports.handler = async (event) => {
 
     const vesselData = requestData.vesselData || requestData;
     const recommendationsData = requestData.recommendationsData || vesselData.recommendationsData || {};
+    const vesselName = vesselData.name || vesselData.vesselName || 'Unknown';
+    const imo = vesselData.imo || vesselData.imoNumber || 'unknown';
 
     if (!vesselData) {
+      console.warn('[generate-excel] Missing vessel data');
       return {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -46,11 +53,12 @@ exports.handler = async (event) => {
       };
     }
 
+    console.log('[generate-excel] Generating Excel file', { vesselName, imo });
+
     // Generate Excel file
     const excelBuffer = await generateExcelFile(vesselData, recommendationsData);
 
-    // Extract IMO for filename
-    const imo = vesselData.imo || vesselData.imoNumber || 'unknown';
+    // Extract IMO for filename (already extracted above)
     const timestamp = Date.now();
     const filename = `recommendations_${imo}_${timestamp}.xlsx`;
     const filepath = path.join(TEMP_DIR, filename);
@@ -62,10 +70,14 @@ exports.handler = async (event) => {
 
     // Save file
     fs.writeFileSync(filepath, /** @type {any} */ (excelBuffer), 'binary');
+    const fileSizeKB = (excelBuffer.length / 1024).toFixed(2);
+    console.log('[generate-excel] File saved', { filename, sizeKB: fileSizeKB });
 
     // Generate download URL
     const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://your-site.netlify.app';
     const downloadUrl = `${baseUrl}/.netlify/functions/download-excel?file=${encodeURIComponent(filename)}`;
+
+    console.log('[generate-excel] Excel generation successful', { filename, downloadUrl });
 
     return {
       statusCode: 200,

@@ -1,10 +1,98 @@
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
 
 // Import utility modules
 const systemPrompts = require('../../config/system-prompts');
 const apiClient = require('../../utils/api-client');
 const stateManager = require('../../utils/state-manager');
 const vesselLookup = require('../../utils/vessel-lookup');
+
+// Import Excel generation function
+const { generateExcelFile } = require('./generate-excel');
+
+const TEMP_DIR = '/tmp';
+
+// Phone number to email mapping (for testing/demo purposes)
+// In production, this should be stored in a database or retrieved from user profile
+const PHONE_TO_EMAIL = {
+  // Add phone numbers (with country code) mapped to emails
+  // Example: '+1234567890': 'user@example.com',
+  // You can also use environment variable for default email
+};
+
+/**
+ * Get email address for a phone number
+ * @param {string} phoneNumber - Phone number
+ * @returns {string|null} Email address or null if not found
+ */
+function getEmailForPhone(phoneNumber) {
+  // Check mapping first
+  if (PHONE_TO_EMAIL[phoneNumber]) {
+    return PHONE_TO_EMAIL[phoneNumber];
+  }
+  
+  // Fallback to environment variable for testing
+  const defaultEmail = process.env.DEFAULT_RECIPIENT_EMAIL || process.env.TEST_RECIPIENT_EMAIL;
+  if (defaultEmail) {
+    return defaultEmail;
+  }
+  
+  return null;
+}
+
+/**
+ * Calculate recommendations counts from recommendationsData
+ * @param {any} recommendationsData - Recommendations data object
+ * @returns {{critical: number, moderate: number, recommended: number}} Counts by priority
+ */
+function calculateRecommendationsCounts(recommendationsData) {
+  // Handle different data structures
+  const criticalData = recommendationsData.CRITICAL || recommendationsData.critical || [];
+  const moderateData = recommendationsData.MODERATE || recommendationsData.moderate || [];
+  const recommendedData = recommendationsData.RECOMMENDED || recommendationsData.recommended || [];
+  
+  // If data is in a flat array, count by priority/severity
+  const allRecommendations = recommendationsData.recommendations || recommendationsData.data || [];
+  
+  let criticalCount = 0;
+  let moderateCount = 0;
+  let recommendedCount = 0;
+  
+  if (Array.isArray(criticalData)) {
+    criticalCount = criticalData.length;
+  }
+  if (Array.isArray(moderateData)) {
+    moderateCount = moderateData.length;
+  }
+  if (Array.isArray(recommendedData)) {
+    recommendedCount = recommendedData.length;
+  }
+  
+  // If counts are 0 but we have a flat array, calculate from array
+  if (criticalCount === 0 && moderateCount === 0 && recommendedCount === 0 && Array.isArray(allRecommendations)) {
+    criticalCount = allRecommendations.filter((/** @type {any} */ r) => 
+      (r.priority || r.severity || '').toUpperCase() === 'CRITICAL' || 
+      (r.priority || r.severity || '').toUpperCase() === 'HIGH'
+    ).length;
+    
+    moderateCount = allRecommendations.filter((/** @type {any} */ r) => 
+      (r.priority || r.severity || '').toUpperCase() === 'MODERATE' || 
+      (r.priority || r.severity || '').toUpperCase() === 'MEDIUM'
+    ).length;
+    
+    recommendedCount = allRecommendations.filter((/** @type {any} */ r) => 
+      (r.priority || r.severity || '').toUpperCase() === 'RECOMMENDED' || 
+      (r.priority || r.severity || '').toUpperCase() === 'LOW'
+    ).length;
+  }
+  
+  return {
+    critical: criticalCount,
+    moderate: moderateCount,
+    recommended: recommendedCount,
+  };
+}
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
@@ -15,11 +103,102 @@ const SUPPORTED_INTENTS = [
   'vessel_info',
 ];
 
+// Rate limiting configuration
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_MAX_REQUESTS = 50; // Max requests per hour per user
+const STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
+// In-memory rate limiting (in production, use Redis or similar)
+const rateLimitStore = new Map();
+
+/**
+ * Logging utility with context
+ * @param {string} level - Log level (info, warn, error)
+ * @param {string} message - Log message
+ * @param {any} context - Additional context object
+ */
+function log(level, message, context = {}) {
+  const timestamp = new Date().toISOString();
+  const contextStr = Object.keys(context).length > 0 ? ` ${JSON.stringify(context)}` : '';
+  console[level](`[${timestamp}] [${level.toUpperCase()}] ${message}${contextStr}`);
+}
+
+/**
+ * Check and update rate limit for a user
+ * @param {string} phoneNumber - User's phone number
+ * @returns {{allowed: boolean, remaining: number, resetAt: number}} Rate limit status
+ */
+function checkRateLimit(phoneNumber) {
+  const now = Date.now();
+  const userLimit = rateLimitStore.get(phoneNumber) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  
+  // Reset if window expired
+  if (now > userLimit.resetAt) {
+    userLimit.count = 0;
+    userLimit.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+  
+  const remaining = Math.max(0, RATE_LIMIT_MAX_REQUESTS - userLimit.count);
+  const allowed = userLimit.count < RATE_LIMIT_MAX_REQUESTS;
+  
+  if (allowed) {
+    userLimit.count++;
+  }
+  
+  rateLimitStore.set(phoneNumber, userLimit);
+  
+  return {
+    allowed,
+    remaining,
+    resetAt: userLimit.resetAt,
+  };
+}
+
+/**
+ * Check if state has expired
+ * @param {any} state - State object
+ * @returns {boolean} True if expired
+ */
+function isStateExpired(state) {
+  if (!state || !state.timestamp) {
+    return true;
+  }
+  const age = Date.now() - state.timestamp;
+  return age > STATE_EXPIRY_MS;
+}
+
+/**
+ * Create user-friendly vessel not found message
+ * @param {string} vesselIdentifier - Vessel name or IMO that was searched
+ * @returns {string} Error message
+ */
+function createVesselNotFoundMessage(vesselIdentifier) {
+  return `I couldn't find a vessel named '${vesselIdentifier}'. Please check the spelling or try using the IMO number.\n\n` +
+         `Try: 'Risk score for GCL YAMUNA' or 'Vessel 9481219'`;
+}
+
+/**
+ * Create unclear intent message
+ * @returns {string} Error message
+ */
+function createUnclearIntentMessage() {
+  return `I'm not sure what you're asking. Try:\n` +
+         `• 'Risk score for GCL YAMUNA'\n` +
+         `• 'Risk level of GCL TAPI'\n` +
+         `• 'Recommendations for GCL GANGA'`;
+}
+
 /**
  * @param {any} event
  */
 exports.handler = async (event) => {
+  log('info', 'WhatsApp webhook received', { 
+    method: event.httpMethod,
+    hasBody: !!event.body 
+  });
+
   if (event.httpMethod !== 'POST') {
+    log('warn', 'Invalid HTTP method', { method: event.httpMethod });
     return {
       statusCode: 405,
       headers: { 'Content-Type': 'text/plain' },
@@ -35,6 +214,7 @@ exports.handler = async (event) => {
       'VESSEL_API_URL',
     ]);
     if (envMissing.length) {
+      log('error', 'Missing required environment variables', { missing: envMissing });
       const message = `Server misconfiguration: missing env vars ${envMissing.join(', ')}`;
       return xmlResponse(generateTwiMLResponse(message));
     }
@@ -46,42 +226,76 @@ exports.handler = async (event) => {
     const toNumber = params.get('To') || '';
     
     if (!userMessage.trim()) {
+      log('info', 'Empty message received', { fromNumber: fromNumber.substring(0, 4) + '****' });
       return xmlResponse(generateTwiMLResponse('Please send a vessel name or IMO to begin.'));
     }
 
     if (!fromNumber) {
-      console.error('Missing From parameter in Twilio webhook');
+      log('error', 'Missing From parameter in Twilio webhook');
       return xmlResponse(generateTwiMLResponse('Error: Missing sender information.'));
+    }
+
+    // Check rate limit
+    const rateLimit = checkRateLimit(fromNumber);
+    if (!rateLimit.allowed) {
+      log('warn', 'Rate limit exceeded', { phoneNumber: fromNumber, remaining: rateLimit.remaining });
+      return xmlResponse(generateTwiMLResponse(
+        `⚠️ You've reached the rate limit. Please try again later.\n\n` +
+        `Limit: ${RATE_LIMIT_MAX_REQUESTS} requests per hour.`
+      ));
+    }
+    
+    if (rateLimit.remaining < 5) {
+      log('info', 'Rate limit warning', { phoneNumber: fromNumber, remaining: rateLimit.remaining });
     }
 
     // Check if user has pending state
     const existingState = stateManager.getState(fromNumber);
     
     if (existingState) {
+      // Check if state has expired
+      if (isStateExpired(existingState)) {
+        log('info', 'State expired', { phoneNumber: fromNumber, stateAge: Date.now() - (existingState.timestamp || 0) });
+        stateManager.clearState(fromNumber);
+        return xmlResponse(generateTwiMLResponse(
+          'Your session expired. Please send your request again.'
+        ));
+      }
+      
       // User has pending state - check if responding to follow-up
-        const normalizedMessage = userMessage.toLowerCase().trim();
-        const isDownload = normalizedMessage === '1' || normalizedMessage === 'download' || normalizedMessage.includes('download');
-        const isEmail = normalizedMessage === '2' || normalizedMessage === 'email' || normalizedMessage.includes('email');
-        
-          if (isDownload) {
-            // User wants to download Excel
-        stateManager.clearState(fromNumber);
-        return await handleExcelRequest(fromNumber, existingState);
-          } else if (isEmail) {
-            // User wants email delivery
-        stateManager.clearState(fromNumber);
-        return await handleEmailRequest(fromNumber, existingState);
-          } else {
+      const normalizedMessage = userMessage.toLowerCase().trim();
+      const isDownload = normalizedMessage === '1' || 
+                        normalizedMessage === 'download' || 
+                        normalizedMessage.includes('download');
+      const isEmail = normalizedMessage === '2' || 
+                     normalizedMessage === 'email' || 
+                     normalizedMessage.includes('email');
+      
+      if (isDownload) {
+        // User wants to download Excel
+        log('info', 'Excel download requested', { phoneNumber: fromNumber, vessel: existingState.vesselName });
+        return await handleExcelRequest(existingState, fromNumber);
+      } else if (isEmail) {
+        // User wants email delivery
+        log('info', 'Email delivery requested', { phoneNumber: fromNumber, vessel: existingState.vesselName });
+        return await handleEmailRequest(existingState, fromNumber);
+      } else {
         // Not a valid follow-up response - clear state and process as new query
+        log('info', 'Invalid follow-up response, clearing state', { phoneNumber: fromNumber, message: userMessage });
         stateManager.clearState(fromNumber);
         return await processNewQuery(userMessage, fromNumber);
       }
     } else {
       // No existing state - process as new query
+      log('info', 'Processing new query', { phoneNumber: fromNumber, messageLength: userMessage.length });
       return await processNewQuery(userMessage, fromNumber);
     }
   } catch (err) {
-    console.error('whatsapp-webhook error', err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    log('error', 'Unhandled error in main handler', { 
+      error: errorMessage,
+      stack: err instanceof Error ? err.stack : undefined
+    });
     return xmlResponse(
       generateTwiMLResponse(
         'Sorry, something went wrong while processing your request. Please try again in a moment.'
@@ -100,6 +314,8 @@ exports.handler = async (event) => {
  */
 async function processNewQuery(userMessage, fromNumber) {
   try {
+    log('info', 'Starting intent detection', { phoneNumber: fromNumber, message: userMessage });
+    
     // Call Claude API with intentDetection prompt
     const prompt = systemPrompts.intentDetection(userMessage);
     
@@ -115,15 +331,31 @@ async function processNewQuery(userMessage, fromNumber) {
       ],
     };
 
-    const resp = await fetch(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: anthropicHeaders(),
-      body: JSON.stringify(payload),
-    });
+    let resp;
+    try {
+      resp = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: anthropicHeaders(),
+        body: JSON.stringify(payload),
+      });
+    } catch (fetchError) {
+      log('error', 'Anthropic API fetch failed', { 
+        phoneNumber: fromNumber, 
+        error: fetchError instanceof Error ? fetchError.message : String(fetchError) 
+      });
+      return xmlResponse(generateTwiMLResponse(
+        'Sorry, I\'m having trouble processing your request right now. Please try again in a moment.'
+      ));
+    }
 
     if (!resp.ok) {
       const text = await resp.text();
-      throw new Error(`Anthropic API error ${resp.status}: ${text}`);
+      log('error', 'Anthropic API error', { 
+        phoneNumber: fromNumber, 
+        status: resp.status, 
+        response: text.substring(0, 200) 
+      });
+      return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
     const data = await resp.json();
@@ -140,27 +372,36 @@ async function processNewQuery(userMessage, fromNumber) {
         intentResult = JSON.parse(contentText);
       }
     } catch (parseErr) {
-      console.error('Error parsing intent detection response:', parseErr);
-      console.error('Response text:', contentText);
-      throw new Error(`Failed to parse intent detection response: ${contentText}`);
+      log('error', 'Failed to parse intent detection response', { 
+        phoneNumber: fromNumber, 
+        parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        responseText: contentText.substring(0, 200)
+      });
+      return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
     const { vessel_identifier, intent, confidence } = intentResult || {};
+    
+    log('info', 'Intent detected', { 
+      phoneNumber: fromNumber, 
+      intent, 
+      confidence, 
+      vesselIdentifier: vessel_identifier 
+    });
 
     // Validate intent
     if (!intent || intent === 'unknown' || !SUPPORTED_INTENTS.includes(intent)) {
-      return xmlResponse(generateTwiMLResponse(
-        'Sorry, I could not determine what you need. Please specify:\n' +
-        '• Risk score\n' +
-        '• Risk level\n' +
-        '• Recommendations\n' +
-        '• Vessel info\n\n' +
-        'Include a vessel name or IMO number.'
-      ));
+      log('warn', 'Unclear or unsupported intent', { 
+        phoneNumber: fromNumber, 
+        intent, 
+        message: userMessage 
+      });
+      return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
     // Validate vessel identifier
     if (!vessel_identifier) {
+      log('warn', 'Missing vessel identifier', { phoneNumber: fromNumber, intent });
       return xmlResponse(generateTwiMLResponse(
         'I need a vessel name or IMO number to help you.\n\n' +
         'Please include the vessel name or IMO in your message.\n\n' +
@@ -190,7 +431,10 @@ async function processNewQuery(userMessage, fromNumber) {
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error in processNewQuery:', errorMessage);
+    log('error', 'Error in processNewQuery', { 
+      phoneNumber: fromNumber, 
+      error: errorMessage 
+    });
     return xmlResponse(generateTwiMLResponse(
       'Sorry, something went wrong while processing your request. Please try again in a moment.'
     ));
@@ -199,30 +443,208 @@ async function processNewQuery(userMessage, fromNumber) {
 
 /**
  * Handle Excel download request
- * @param {string} fromNumber - User's phone number
  * @param {any} state - Conversation state with vessel data
+ * @param {string} fromNumber - User's phone number
  * @returns {Promise<any>} TwiML response
  */
-async function handleExcelRequest(fromNumber, state) {
-  // TODO: Implement Excel download handler
-  // Should use state.vesselData and state.recommendationsData
-  return xmlResponse(generateTwiMLResponse(
-    'Excel download feature coming soon!'
-  ));
+async function handleExcelRequest(state, fromNumber) {
+  try {
+    // Retrieve vessel data and recommendations data from state
+    const vesselData = state.vesselData || {};
+    const recommendationsData = state.recommendationsData || {};
+    const vesselName = state.vesselName || vesselData.name || vesselData.vesselName || 'Unknown Vessel';
+
+    if (!vesselData || Object.keys(vesselData).length === 0) {
+      stateManager.clearState(fromNumber);
+      return xmlResponse(generateTwiMLResponse(
+        '❌ Error: Vessel data not found. Please start a new query.'
+      ));
+    }
+
+    // Generate Excel file using internal function call
+    const excelBuffer = await generateExcelFile(vesselData, recommendationsData);
+
+    // Extract IMO for filename
+    const imo = vesselData.imo || vesselData.imoNumber || state.vesselIMO || 'unknown';
+    const timestamp = Date.now();
+    const filename = `recommendations_${imo}_${timestamp}.xlsx`;
+    const filepath = path.join(TEMP_DIR, filename);
+    
+    // Ensure temp directory exists
+    if (!fs.existsSync(TEMP_DIR)) {
+      fs.mkdirSync(TEMP_DIR, { recursive: true });
+    }
+
+    // Save file to /tmp directory
+    fs.writeFileSync(filepath, /** @type {any} */ (excelBuffer), 'binary');
+
+    // Generate download URL
+    const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://your-site.netlify.app';
+    const downloadUrl = `${baseUrl}/.netlify/functions/download-excel?file=${encodeURIComponent(filename)}`;
+
+    // Clear state after successful generation
+    stateManager.clearState(fromNumber);
+
+    // Send message with download link
+    const message = `📊 Here's your recommendations report for ${vesselName}:\n\n${downloadUrl}\n\n⚠️ Link expires in 10 minutes.`;
+    
+    log('info', 'Excel file generated successfully', { phoneNumber: fromNumber, vesselName, filename });
+    
+    return xmlResponse(generateTwiMLResponse(message));
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log('error', 'Error in handleExcelRequest', { 
+      phoneNumber: fromNumber, 
+      error: errorMessage 
+    });
+    
+    // Clear state on error to prevent stuck state
+    stateManager.clearState(fromNumber);
+    
+    return xmlResponse(generateTwiMLResponse(
+      `❌ Sorry, I encountered an error generating the Excel file.\n\n` +
+      `Please try again or contact support.`
+    ));
+  }
 }
 
 /**
  * Handle email delivery request
- * @param {string} fromNumber - User's phone number
  * @param {any} state - Conversation state with vessel data
+ * @param {string} fromNumber - User's phone number
  * @returns {Promise<any>} TwiML response
  */
-async function handleEmailRequest(fromNumber, state) {
-  // TODO: Implement email delivery handler
-  // Should use state.vesselData and state.recommendationsData
-  return xmlResponse(generateTwiMLResponse(
-    'Email delivery feature coming soon!'
-  ));
+async function handleEmailRequest(state, fromNumber) {
+  let excelFilePath = null;
+  
+  try {
+    // Retrieve vessel data and recommendations data from state
+    const vesselData = state.vesselData || {};
+    const recommendationsData = state.recommendationsData || {};
+    const vesselName = state.vesselName || vesselData.name || vesselData.vesselName || 'Unknown Vessel';
+    const vesselIMO = state.vesselIMO || vesselData.imo || vesselData.imoNumber || 'N/A';
+
+    if (!vesselData || Object.keys(vesselData).length === 0) {
+      stateManager.clearState(fromNumber);
+      return xmlResponse(generateTwiMLResponse(
+        '❌ Error: Vessel data not found. Please start a new query.'
+      ));
+    }
+
+    // Get recipient email from phone number mapping or default
+    const recipientEmail = getEmailForPhone(fromNumber);
+    if (!recipientEmail) {
+      // Keep state so user can still download
+      return xmlResponse(generateTwiMLResponse(
+        `❌ Email address not found for your phone number.\n\n` +
+        `Please use the download option instead. Reply '1' to download.`
+      ));
+    }
+
+    // Generate Excel file using internal function call (same as download flow)
+    const excelBuffer = await generateExcelFile(vesselData, recommendationsData);
+
+    // Extract IMO for filename
+    const imo = vesselData.imo || vesselData.imoNumber || state.vesselIMO || 'unknown';
+    const timestamp = Date.now();
+    const filename = `recommendations_${imo}_${timestamp}.xlsx`;
+    excelFilePath = path.join(TEMP_DIR, filename);
+    
+    // Ensure temp directory exists
+    if (!fs.existsSync(TEMP_DIR)) {
+      fs.mkdirSync(TEMP_DIR, { recursive: true });
+    }
+
+    // Save file to /tmp directory
+    fs.writeFileSync(excelFilePath, /** @type {any} */ (excelBuffer), 'binary');
+
+    // Calculate recommendations counts
+    const counts = calculateRecommendationsCounts(recommendationsData);
+
+    // Extract risk information
+    const riskScore = vesselData.riskScore || vesselData.risk_score || 'N/A';
+    const riskLevel = vesselData.riskLevel || vesselData.risk_level || 'N/A';
+
+    // Call send-email function via HTTP
+    const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://your-site.netlify.app';
+    const sendEmailUrl = `${baseUrl}/.netlify/functions/send-email`;
+
+    const emailPayload = {
+      recipientEmail: recipientEmail,
+      vesselName: vesselName,
+      vesselIMO: vesselIMO,
+      excelFilePath: excelFilePath,
+      recommendationsCounts: {
+        critical: counts.critical,
+        moderate: counts.moderate,
+        recommended: counts.recommended,
+      },
+      riskScore: riskScore,
+      riskLevel: riskLevel,
+    };
+
+    const emailResponse = await fetch(sendEmailUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(emailPayload),
+    });
+
+    if (!emailResponse.ok) {
+      const errorData = await emailResponse.json().catch(() => ({}));
+      const errorMessage = errorData.message || errorData.error || `HTTP ${emailResponse.status}`;
+      
+      // Clean up Excel file on error
+      if (excelFilePath && fs.existsSync(excelFilePath)) {
+        try {
+          fs.unlinkSync(excelFilePath);
+        } catch (cleanupError) {
+          console.warn('Error cleaning up Excel file:', cleanupError);
+        }
+      }
+
+      // Keep state so user can try download instead
+      return xmlResponse(generateTwiMLResponse(
+        `⚠️ Email delivery failed. Would you like to download instead? Reply '1'`
+      ));
+    }
+
+    const emailResult = await emailResponse.json();
+
+    // Clear state after successful email send
+    stateManager.clearState(fromNumber);
+
+    // Send confirmation message
+    const message = `✅ Recommendations report for ${vesselName} has been sent to ${recipientEmail}. Please check your inbox.`;
+    
+    log('info', 'Email sent successfully', { phoneNumber: fromNumber, vesselName, recipientEmail });
+    
+    return xmlResponse(generateTwiMLResponse(message));
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log('error', 'Error in handleEmailRequest', { 
+      phoneNumber: fromNumber, 
+      error: errorMessage 
+    });
+    
+    // Clean up Excel file on error (best effort)
+    if (excelFilePath && fs.existsSync(excelFilePath)) {
+      try {
+        fs.unlinkSync(excelFilePath);
+      } catch (cleanupError) {
+        log('warn', 'Error cleaning up Excel file', { 
+          phoneNumber: fromNumber, 
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) 
+        });
+      }
+    }
+
+    // Keep state so user can try download instead
+    return xmlResponse(generateTwiMLResponse(
+      `⚠️ Email delivery failed. Would you like to download instead? Reply '1'`
+    ));
+  }
 }
 
 /**
@@ -233,6 +655,8 @@ async function handleEmailRequest(fromNumber, state) {
  */
 async function handleRiskScoreIntent(vesselIdentifier, fromNumber) {
   try {
+    log('info', 'Processing risk score intent', { phoneNumber: fromNumber, vesselIdentifier });
+    
     // 1. Resolve vessel identifier to IMO using vessel-lookup
     let vesselLookupResult = null;
     let imo = null;
@@ -256,39 +680,54 @@ async function handleRiskScoreIntent(vesselIdentifier, fromNumber) {
     }
 
     if (!imo) {
-      return xmlResponse(generateTwiMLResponse(
-        `❌ Could not find vessel "${vesselIdentifier}".\n\n` +
-        `Please provide a valid vessel name or IMO number.\n\n` +
-        `Example: "GCL YAMUNA" or "9481219"`
-      ));
+      log('warn', 'Vessel not found in lookup', { phoneNumber: fromNumber, vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
     }
 
     // 2. Fetch vessel data using api-client
-    const vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
-    if (!vesselData) {
+    let vesselData;
+    try {
+      vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
+    } catch (apiError) {
+      log('error', 'Dashboard API failed', { 
+        phoneNumber: fromNumber, 
+        vesselName: vesselName || vesselIdentifier,
+        error: apiError instanceof Error ? apiError.message : String(apiError)
+      });
       return xmlResponse(generateTwiMLResponse(
-        `❌ Vessel not found.\n\n` +
-        `Could not fetch data for "${vesselName || vesselIdentifier}".\n\n` +
-        `Please verify the vessel name or IMO and try again.`
+        'Sorry, I\'m having trouble accessing vessel data right now. Please try again in a moment.'
       ));
     }
+    
+    if (!vesselData) {
+      log('warn', 'Vessel data not found in API', { phoneNumber: fromNumber, vesselName: vesselName || vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
+    }
+
+    log('info', 'Vessel data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
 
     // 3. Call Claude API with riskScoreAnalysis prompt
     const prompt = systemPrompts.riskScoreAnalysis(vesselData);
     const analysis = await callClaude(prompt);
 
     if (!analysis) {
+      log('error', 'Claude API analysis failed', { phoneNumber: fromNumber, vesselName });
       return xmlResponse(generateTwiMLResponse(
-        `❌ Could not analyze risk score for "${vesselName || vesselIdentifier}".\n\n` +
-        `Please try again in a moment.`
+        `Sorry, I couldn't analyze the risk score for "${vesselName || vesselIdentifier}". Please try again in a moment.`
       ));
     }
 
+    log('info', 'Risk score analysis completed', { phoneNumber: fromNumber, vesselName });
+    
     // 4. Return analyzed response as TwiML
     return xmlResponse(generateTwiMLResponse(analysis));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error in handleRiskScoreIntent:', errorMessage);
+    log('error', 'Error in handleRiskScoreIntent', { 
+      phoneNumber: fromNumber, 
+      vesselIdentifier, 
+      error: errorMessage 
+    });
     return xmlResponse(generateTwiMLResponse(
       'Sorry, something went wrong while fetching the risk score. Please try again in a moment.'
     ));
@@ -303,6 +742,8 @@ async function handleRiskScoreIntent(vesselIdentifier, fromNumber) {
  */
 async function handleRiskLevelIntent(vesselIdentifier, fromNumber) {
   try {
+    log('info', 'Processing risk level intent', { phoneNumber: fromNumber, vesselIdentifier });
+    
     // 1. Resolve vessel identifier to IMO using vessel-lookup
     let vesselLookupResult = null;
     let imo = null;
@@ -326,39 +767,54 @@ async function handleRiskLevelIntent(vesselIdentifier, fromNumber) {
     }
 
     if (!imo) {
-      return xmlResponse(generateTwiMLResponse(
-        `❌ Could not find vessel "${vesselIdentifier}".\n\n` +
-        `Please provide a valid vessel name or IMO number.\n\n` +
-        `Example: "GCL YAMUNA" or "9481219"`
-      ));
+      log('warn', 'Vessel not found in lookup', { phoneNumber: fromNumber, vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
     }
 
     // 2. Fetch vessel data using api-client
-    const vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
-    if (!vesselData) {
+    let vesselData;
+    try {
+      vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
+    } catch (apiError) {
+      log('error', 'Dashboard API failed', { 
+        phoneNumber: fromNumber, 
+        vesselName: vesselName || vesselIdentifier,
+        error: apiError instanceof Error ? apiError.message : String(apiError)
+      });
       return xmlResponse(generateTwiMLResponse(
-        `❌ Vessel not found.\n\n` +
-        `Could not fetch data for "${vesselName || vesselIdentifier}".\n\n` +
-        `Please verify the vessel name or IMO and try again.`
+        'Sorry, I\'m having trouble accessing vessel data right now. Please try again in a moment.'
       ));
     }
+    
+    if (!vesselData) {
+      log('warn', 'Vessel data not found in API', { phoneNumber: fromNumber, vesselName: vesselName || vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
+    }
+
+    log('info', 'Vessel data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
 
     // 3. Call Claude API with riskLevelAnalysis prompt
     const prompt = systemPrompts.riskLevelAnalysis(vesselData);
     const analysis = await callClaude(prompt);
 
     if (!analysis) {
+      log('error', 'Claude API analysis failed', { phoneNumber: fromNumber, vesselName });
       return xmlResponse(generateTwiMLResponse(
-        `❌ Could not analyze risk level for "${vesselName || vesselIdentifier}".\n\n` +
-        `Please try again in a moment.`
+        `Sorry, I couldn't analyze the risk level for "${vesselName || vesselIdentifier}". Please try again in a moment.`
       ));
     }
 
+    log('info', 'Risk level analysis completed', { phoneNumber: fromNumber, vesselName });
+    
     // 4. Return analyzed response as TwiML
     return xmlResponse(generateTwiMLResponse(analysis));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error in handleRiskLevelIntent:', errorMessage);
+    log('error', 'Error in handleRiskLevelIntent', { 
+      phoneNumber: fromNumber, 
+      vesselIdentifier, 
+      error: errorMessage 
+    });
     return xmlResponse(generateTwiMLResponse(
       'Sorry, something went wrong while fetching the risk level. Please try again in a moment.'
     ));
@@ -373,6 +829,8 @@ async function handleRiskLevelIntent(vesselIdentifier, fromNumber) {
  */
 async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
   try {
+    log('info', 'Processing recommendations intent', { phoneNumber: fromNumber, vesselIdentifier });
+    
     // 1. Resolve vessel identifier to IMO using vessel-lookup
     let vesselLookupResult = null;
     let imo = null;
@@ -396,30 +854,56 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
     }
 
     if (!imo) {
-      return xmlResponse(generateTwiMLResponse(
-        `❌ Could not find vessel "${vesselIdentifier}".\n\n` +
-        `Please provide a valid vessel name or IMO number.\n\n` +
-        `Example: "GCL YAMUNA" or "9481219"`
-      ));
+      log('warn', 'Vessel not found in lookup', { phoneNumber: fromNumber, vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
     }
 
     // 2. Fetch vessel data from dashboard API
-    const vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
-    if (!vesselData) {
+    let vesselData;
+    try {
+      vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
+    } catch (apiError) {
+      log('error', 'Dashboard API failed', { 
+        phoneNumber: fromNumber, 
+        vesselName: vesselName || vesselIdentifier,
+        error: apiError instanceof Error ? apiError.message : String(apiError)
+      });
       return xmlResponse(generateTwiMLResponse(
-        `❌ Could not fetch vessel data for "${vesselName || vesselIdentifier}".\n\n` +
-        `Please try again in a moment.`
+        'Sorry, I\'m having trouble accessing vessel data right now. Please try again in a moment.'
+      ));
+    }
+    
+    if (!vesselData) {
+      log('warn', 'Vessel data not found in API', { phoneNumber: fromNumber, vesselName: vesselName || vesselIdentifier });
+      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
+    }
+
+    log('info', 'Vessel data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
+
+    // 3. Fetch detailed recommendations from recommendations API
+    let recommendationsData;
+    try {
+      recommendationsData = await apiClient.fetchRecommendations(imo);
+    } catch (apiError) {
+      log('error', 'Recommendations API failed', { 
+        phoneNumber: fromNumber, 
+        imo,
+        vesselName,
+        error: apiError instanceof Error ? apiError.message : String(apiError)
+      });
+      return xmlResponse(generateTwiMLResponse(
+        'I found the vessel but couldn\'t retrieve recommendations. Please try again.'
+      ));
+    }
+    
+    if (!recommendationsData) {
+      log('warn', 'Recommendations data not found', { phoneNumber: fromNumber, imo, vesselName });
+      return xmlResponse(generateTwiMLResponse(
+        'I found the vessel but couldn\'t retrieve recommendations. Please try again.'
       ));
     }
 
-    // 3. Fetch detailed recommendations from recommendations API
-    const recommendationsData = await apiClient.fetchRecommendations(imo);
-    if (!recommendationsData) {
-      return xmlResponse(generateTwiMLResponse(
-        `❌ Could not fetch recommendations for "${vesselName || vesselIdentifier}".\n\n` +
-        `This vessel may not have recommendations available.`
-      ));
-    }
+    log('info', 'Recommendations data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
 
     // 4. Call Claude API with recommendationsSummary prompt
     const prompt = systemPrompts.recommendationsSummary(recommendationsData);
@@ -444,7 +928,11 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
 
     if (!resp.ok) {
       const text = await resp.text();
-      console.error(`Anthropic API error ${resp.status}: ${text}`);
+      log('warn', 'Anthropic API error, using fallback summary', { 
+        phoneNumber: fromNumber, 
+        status: resp.status,
+        vesselName 
+      });
       // Fallback: create simple summary if Claude fails
       const recommendations = recommendationsData?.recommendations || recommendationsData?.data || [];
       const critical = Array.isArray(recommendations) ? recommendations.filter((/** @type {any} */ r) => 
@@ -471,14 +959,17 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
         `2️⃣ Email to your registered address\n\n` +
         `Reply with '1' or '2'`;
       
-      // Save state
+      // Save state with timestamp
       stateManager.saveState(fromNumber, {
         intent: 'recommendations',
         vesselName: vesselName || vesselIdentifier,
         vesselIMO: imo,
         vesselData: vesselData,
         recommendationsData: recommendationsData,
+        timestamp: Date.now(),
       });
+      
+      log('info', 'State saved for recommendations follow-up', { phoneNumber: fromNumber, vesselName });
       
       return xmlResponse(generateTwiMLResponse(message));
     }
@@ -500,13 +991,20 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
       vesselIMO: imo,
       vesselData: vesselData,
       recommendationsData: recommendationsData,
+      timestamp: Date.now(),
     });
+
+    log('info', 'State saved for recommendations follow-up', { phoneNumber: fromNumber, vesselName });
 
     // 7. Return TwiML response
     return xmlResponse(generateTwiMLResponse(message));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error in handleRecommendationsIntent:', errorMessage);
+    log('error', 'Error in handleRecommendationsIntent', { 
+      phoneNumber: fromNumber, 
+      vesselIdentifier, 
+      error: errorMessage 
+    });
     return xmlResponse(generateTwiMLResponse(
       'Sorry, something went wrong while fetching recommendations. Please try again in a moment.'
     ));

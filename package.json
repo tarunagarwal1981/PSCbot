@@ -4,13 +4,17 @@
   "description": "WhatsApp chatbot for maritime vessel PSC (Port State Control) data queries using Twilio, Claude AI, and Netlify serverless functions",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "echo 'Validating JavaScript syntax...' && (for file in netlify/functions/*.js utils/*.js config/*.js; do [ -f \"$file\" ] && node -c \"$file\" || exit 1; done) && echo '✓ All JavaScript files validated successfully'",
     "dev": "netlify dev",
     "deploy": "netlify deploy --prod",
-    "test": "node test-setup.js",
-    "generate-excel": "node netlify/functions/generate-excel.js",
-    "test-excel": "node test-excel-generation.js",
-    "test-email": "node test-email-sending.js"
+    "deploy:preview": "netlify deploy",
+    "test": "node test/test-vessel-lookup.js && node test/test-api-client.js",
+    "test:excel": "node test/test-excel-generation.js",
+    "test:email": "node test-email-sending.js",
+    "test:setup": "node test-setup.js",
+    "lint": "echo 'Add linter if needed'",
+    "logs": "netlify functions:log whatsapp-webhook",
+    "logs:follow": "netlify functions:log whatsapp-webhook --follow"
   },
   "keywords": [
     "whatsapp",
@@ -26,15 +30,15 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@sendgrid/mail": "^7.7.0",
+    "node-fetch": "^2.6.7",
     "exceljs": "^4.4.0",
-    "node-fetch": "2.6.7"
+    "@sendgrid/mail": "^7.7.0"
   },
   "devDependencies": {
     "@types/dotenv": "^6.1.1",
     "@types/node": "^25.0.1",
     "@types/node-fetch": "^2.6.13",
-    "netlify-cli": "17.0.0",
+    "netlify-cli": "^17.0.0",
     "typescript": "^5.9.3"
   }
 }

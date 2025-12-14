@@ -1,6 +1,10 @@
+# Vessel Name to IMO Mapping
+# Add your full fleet below (600+ vessels)
+# Format: vessel_name,imo
+# Names are case-insensitive for matching
+
 vessel_name,imo
 GCL YAMUNA,9481219
 GCL TAPI,9481659
 GCL GANGA,9481697
 GCL SABARMATI,9481661
-

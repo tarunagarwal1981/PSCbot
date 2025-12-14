@@ -1,0 +1,181 @@
+{
+  "vessel": {
+    "name": "GCL YAMUNA",
+    "imo": "9481219",
+    "imoNumber": "9481219",
+    "riskScore": 45,
+    "risk_score": 45,
+    "riskLevel": "HIGH",
+    "risk_level": "HIGH",
+    "riskLabel": "High Risk",
+    "lastInspection": {
+      "date": "2024-01-15",
+      "inspectionDate": "2024-01-15",
+      "timestamp": 1705276800000,
+      "port": "Port of Singapore",
+      "portName": "Port of Singapore",
+      "port_name": "Port of Singapore"
+    }
+  },
+  "recommendations": {
+    "CRITICAL": [
+      {
+        "category": "Covers (hatchway-, portable-, tarpaulins, etc.)",
+        "issueType": "CRITICAL",
+        "priority": "CRITICAL",
+        "severity": "HIGH",
+        "campaignTrend": "Increasing trend in PSC inspections",
+        "recommendations": [
+          "Inspect all hatchway covers for proper fit",
+          "Check tarpaulin condition and replace if damaged",
+          "Ensure proper securing mechanisms are functional"
+        ],
+        "internalChecklist": [
+          "Visual inspection of all covers",
+          "Documentation of cover condition",
+          "Maintenance schedule review"
+        ],
+        "externalChecklist": [
+          "PSC inspection readiness",
+          "Compliance with SOLAS requirements",
+          "Port state control preparation"
+        ],
+        "generalChecklist": [
+          "Regular maintenance schedule",
+          "Crew training on cover handling"
+        ]
+      },
+      {
+        "category": "Fire safety",
+        "issueType": "CRITICAL",
+        "priority": "CRITICAL",
+        "severity": "HIGH",
+        "campaignTrend": "Standard compliance check",
+        "recommendations": [
+          "Review fire safety equipment maintenance records",
+          "Conduct fire drill training for crew"
+        ],
+        "internalChecklist": [
+          "Fire extinguisher inspection",
+          "Fire detection system test",
+          "Emergency response plan review"
+        ],
+        "externalChecklist": [
+          "SOLAS compliance verification",
+          "Port state control fire safety check"
+        ]
+      }
+    ],
+    "MODERATE": [
+      {
+        "category": "Navigation equipment",
+        "issueType": "MODERATE",
+        "priority": "MODERATE",
+        "severity": "MEDIUM",
+        "campaignTrend": "Standard compliance check",
+        "recommendations": [
+          "Review navigation equipment maintenance records",
+          "Consider upgrading navigation equipment"
+        ],
+        "internalChecklist": [
+          "Equipment performance review",
+          "Calibration check"
+        ],
+        "externalChecklist": [
+          "Industry best practices compliance",
+          "Regulatory compliance verification"
+        ]
+      },
+      {
+        "category": "Life-saving appliances",
+        "issueType": "MODERATE",
+        "priority": "MODERATE",
+        "severity": "MEDIUM",
+        "campaignTrend": "Routine inspection",
+        "recommendations": [
+          "Verify lifeboat condition",
+          "Check lifejacket inventory"
+        ],
+        "internalChecklist": [
+          "Life-saving equipment inventory",
+          "Maintenance records review"
+        ],
+        "externalChecklist": [
+          "SOLAS compliance check",
+          "Port state control verification"
+        ]
+      }
+    ],
+    "RECOMMENDED": [
+      {
+        "category": "General maintenance",
+        "issueType": "RECOMMENDED",
+        "priority": "RECOMMENDED",
+        "severity": "LOW",
+        "campaignTrend": "Best practice recommendation",
+        "recommendations": [
+          "Implement preventive maintenance schedule",
+          "Document all maintenance activities"
+        ],
+        "internalChecklist": [
+          "Maintenance log review",
+          "Schedule optimization"
+        ],
+        "externalChecklist": [
+          "Industry best practices",
+          "Compliance documentation"
+        ]
+      }
+    ],
+    "campaigns": [
+      {
+        "name": "Hatchway Covers Campaign",
+        "campaignName": "Hatchway Covers Campaign",
+        "recommendations": [
+          "Ensure all covers are properly secured",
+          "Inspect covers for damage before departure",
+          "Maintain proper documentation"
+        ]
+      }
+    ]
+  },
+  "dashboardData": {
+    "vessels": [
+      {
+        "name": "GCL YAMUNA",
+        "imo": "9481219",
+        "imoNumber": "9481219",
+        "riskScore": 45,
+        "risk_score": 45,
+        "riskLevel": "HIGH",
+        "risk_level": "HIGH",
+        "riskLabel": "High Risk",
+        "lastInspection": {
+          "date": "2024-01-15",
+          "port": "Port of Singapore"
+        }
+      },
+      {
+        "name": "GCL TAPI",
+        "imo": "9481659",
+        "imoNumber": "9481659",
+        "riskScore": 35,
+        "risk_score": 35,
+        "riskLevel": "MEDIUM",
+        "risk_level": "MEDIUM",
+        "riskLabel": "Medium Risk"
+      },
+      {
+        "name": "GCL GANGA",
+        "imo": "9481697",
+        "imoNumber": "9481697",
+        "riskScore": 25,
+        "risk_score": 25,
+        "riskLevel": "LOW",
+        "risk_level": "LOW",
+        "riskLabel": "Low Risk"
+      }
+    ]
+  }
+}
+
