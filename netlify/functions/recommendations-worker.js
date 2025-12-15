@@ -86,7 +86,8 @@ exports.handler = async (event) => {
     const vesselName = lookup?.name || vesselIdentifier;
 
     // Fetch recommendations (may be slow)
-    const recData = await apiClient.fetchRecommendations(imo);
+    // Allow longer timeout here (background), default to 30s
+    const recData = await apiClient.fetchRecommendations(imo, { timeoutMs: 30000 });
 
     if (!recData) {
       await sendWhatsAppMessage(

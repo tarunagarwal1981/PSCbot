@@ -11,7 +11,7 @@ const RECOMMENDATIONS_API =
 
 // Cache configuration
 const CACHE_DURATION_MS = 3600000; // 1 hour
-const RECOMMENDATIONS_TIMEOUT_MS = 8000; // 8s timeout to avoid webhook overrun
+const RECOMMENDATIONS_TIMEOUT_MS = 8000; // default 8s (override per call)
 
 // In-memory cache for dashboard data
 /** @type {{ data: any, timestamp: number } | null} */
@@ -163,7 +163,11 @@ async function fetchVesselByName(vesselName) {
  * @param {string|number} imo - IMO number of the vessel
  * @returns {Promise<any>} Recommendations data or null on error
  */
-async function fetchRecommendations(imo) {
+/**
+ * @param {string|number} imo
+ * @param {{ timeoutMs?: number }} [options]
+ */
+async function fetchRecommendations(imo, options = {}) {
   if (!imo) {
     console.error('Invalid IMO provided');
     return null;
@@ -175,9 +179,11 @@ async function fetchRecommendations(imo) {
     return null;
   }
 
+  const timeoutMs = options.timeoutMs || RECOMMENDATIONS_TIMEOUT_MS;
+
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), RECOMMENDATIONS_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     // Replace {IMO} placeholder in URL
     const url = RECOMMENDATIONS_API.replace('{IMO}', imoStr);
