@@ -64,39 +64,10 @@ function loadVesselMappings() {
     }
   }
 
-  // 3) Try CSV from repo
-  const csvPath = path.join(__dirname, '..', 'data', 'vessel-mappings.csv');
-  
-  if (!fs.existsSync(csvPath)) {
-    console.warn(`Warning: Vessel mappings file not found at ${csvPath}, using default list`);
-    vesselCache = DEFAULT_VESSELS;
-    return vesselCache;
-  }
-
-  const csvContent = fs.readFileSync(csvPath, 'utf8');
-  const lines = csvContent.split('\n').filter(line => line.trim() !== '');
-  
-  // Skip header row
-  const vessels = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]?.trim();
-    if (!line) continue;
-    if (!line) continue;
-    
-    // Parse CSV line (handles quoted values)
-    const parts = line.split(',').map(part => part.trim().replace(/^"|"$/g, ''));
-    if (parts.length >= 2) {
-      const name = parts[0].trim();
-      const imo = parts[1].trim();
-      if (name && imo) {
-        vessels.push({ name, imo });
-      }
-    }
-  }
-
-  vesselCache = vessels;
-  console.log('Vessel mappings loaded from vessel-mappings.csv');
-  return vessels;
+  // 3) Fallback defaults (small)
+  console.warn('Warning: No vessel mappings JSON found; using default list only');
+  vesselCache = DEFAULT_VESSELS;
+  return vesselCache;
 }
 
 /**
