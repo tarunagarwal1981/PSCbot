@@ -5,6 +5,8 @@
 
 [functions]
   node_bundler = "esbuild"
+  # Ensure vessel CSV is packaged with functions
+  included_files = ["data/**"]
 
 [[redirects]]
   from = "/api/*"

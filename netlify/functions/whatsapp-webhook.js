@@ -95,7 +95,8 @@ function calculateRecommendationsCounts(recommendationsData) {
 }
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+// Allow faster/cheaper model override via env var to reduce latency
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 const SUPPORTED_INTENTS = [
   'risk_score',
   'risk_level',
@@ -1047,7 +1048,8 @@ async function handleVesselInfoIntent(vesselIdentifier, fromNumber) {
  * @param {number} maxTokens - Maximum tokens (default: 1000)
  * @returns {Promise<string|null>} Response text or null on error
  */
-async function callClaude(prompt, temperature = 0.7, maxTokens = 1000) {
+// Keep max tokens modest to stay within Twilio's 15s webhook window
+async function callClaude(prompt, temperature = 0.5, maxTokens = 400) {
   try {
     const payload = {
       model: CLAUDE_MODEL,
