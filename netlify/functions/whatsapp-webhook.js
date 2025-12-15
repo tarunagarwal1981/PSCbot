@@ -352,7 +352,7 @@ async function processNewQuery(userMessage, fromNumber) {
       const text = await resp.text();
       log('error', 'Anthropic API error', { 
         phoneNumber: fromNumber, 
-        status: resp.status,
+        status: resp.status, 
         statusText: resp.statusText,
         response: text.substring(0, 500) 
       });
@@ -855,7 +855,7 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
     // Fire-and-forget background worker; don't block webhook
     triggerRecommendationsWorker(fromNumber, vesselIdentifier);
 
-    return xmlResponse(generateTwiMLResponse(
+      return xmlResponse(generateTwiMLResponse(
       `📋 I’m preparing recommendations for ${vesselIdentifier}. I’ll send them shortly as a separate message.`
     ));
   } catch (error) {
@@ -1236,7 +1236,8 @@ function triggerRecommendationsWorker(fromNumber, vesselIdentifier) {
       console.error('Base URL not set; cannot trigger worker');
       return;
     }
-    const workerUrl = `${baseUrl}/.netlify/functions/recommendations-worker`;
+    // Use background function so long-running jobs don't hit timeout
+    const workerUrl = `${baseUrl}/.netlify/functions/recommendations-worker-background`;
     // Fire-and-forget; we don't await this in the webhook
     fetch(workerUrl, {
       method: 'POST',
