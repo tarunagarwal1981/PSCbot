@@ -30,6 +30,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "abort-controller": "^3.0.0",
     "node-fetch": "^2.6.7",
     "exceljs": "^4.4.0",
     "@sendgrid/mail": "^7.7.0"
