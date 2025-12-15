@@ -31,7 +31,11 @@ function loadVesselMappings() {
       if (Array.isArray(parsed)) {
         vesselCache = parsed
           .filter(v => v && v.name && v.imo)
-          .map(v => ({ name: String(v.name), imo: String(v.imo) }));
+          .map(v => ({
+            name: String(v.name).trim(),
+            imo: String(v.imo).trim(),
+          }));
+        console.log('Vessel mappings loaded from env JSON');
         return vesselCache;
       }
     } catch (err) {
@@ -48,7 +52,11 @@ function loadVesselMappings() {
       if (Array.isArray(parsed)) {
         vesselCache = parsed
           .filter(v => v && v.name && v.imo)
-          .map(v => ({ name: String(v.name), imo: String(v.imo) }));
+          .map(v => ({
+            name: String(v.name).trim(),
+            imo: String(v.imo).trim(),
+          }));
+        console.log('Vessel mappings loaded from vessel-mappings.json');
         return vesselCache;
       }
     } catch (err) {
@@ -78,8 +86,8 @@ function loadVesselMappings() {
     // Parse CSV line (handles quoted values)
     const parts = line.split(',').map(part => part.trim().replace(/^"|"$/g, ''));
     if (parts.length >= 2) {
-      const name = parts[0];
-      const imo = parts[1];
+      const name = parts[0].trim();
+      const imo = parts[1].trim();
       if (name && imo) {
         vessels.push({ name, imo });
       }
@@ -87,6 +95,7 @@ function loadVesselMappings() {
   }
 
   vesselCache = vessels;
+  console.log('Vessel mappings loaded from vessel-mappings.csv');
   return vessels;
 }
 
