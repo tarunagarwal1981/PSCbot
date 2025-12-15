@@ -10,6 +10,7 @@ const vesselLookup = require('../../utils/vessel-lookup');
 
 // Import Excel generation function
 const { generateExcelFile } = require('./generate-excel');
+const fetch = require('node-fetch');
 
 const TEMP_DIR = '/tmp';
 
@@ -912,8 +913,10 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
     
     if (!recommendationsData) {
       log('warn', 'Recommendations data not found', { phoneNumber: fromNumber, imo, vesselName });
+      // Fall back to background worker to avoid blocking webhook
+      await triggerRecommendationsWorker(fromNumber, vesselName || vesselIdentifier, imo);
       return xmlResponse(generateTwiMLResponse(
-        'I found the vessel but the recommendations feed is unavailable right now. Please try again later.'
+        `📋 I’m preparing recommendations for ${vesselName || vesselIdentifier}. I’ll send them shortly.`
       ));
     }
 
@@ -1020,7 +1023,7 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
       error: errorMessage 
     });
     return xmlResponse(generateTwiMLResponse(
-      'Sorry, something went wrong while fetching recommendations. Please try again in a moment.'
+      `📋 I’m preparing recommendations for ${vesselIdentifier}. I’ll send them shortly.`
     ));
   }
 }
@@ -1375,6 +1378,33 @@ function formatRecommendationsDirectly(vesselData) {
   } catch (error) {
     console.error('Error in formatRecommendationsDirectly:', error);
     return 'Sorry, I encountered an error formatting recommendations. Please try again.';
+  }
+}
+
+/**
+ * Trigger the background recommendations worker
+ * @param {string} fromNumber
+ * @param {string} vesselIdentifier
+ */
+async function triggerRecommendationsWorker(fromNumber, vesselIdentifier) {
+  try {
+    const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL;
+    if (!baseUrl) {
+      console.error('Base URL not set; cannot trigger worker');
+      return;
+    }
+    const workerUrl = `${baseUrl}/.netlify/functions/recommendations-worker`;
+    const resp = await fetch(workerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromNumber, vesselIdentifier }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.error('Failed to trigger recommendations worker', resp.status, text.substring(0, 200));
+    }
+  } catch (err) {
+    console.error('Error triggering recommendations worker', err);
   }
 }
 
