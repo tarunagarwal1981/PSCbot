@@ -213,12 +213,12 @@ async function fetchRecommendations(imo, options = {}) {
       // Some responses contain leading commented lines (starting with '#')
       const cleaned = raw.replace(/^#[^\n]*\n/gm, '').trim();
       const data = JSON.parse(cleaned);
-      console.log(`Recommendations fetched successfully for IMO ${imoStr}`);
+      console.log(`Recommendations fetched successfully for IMO ${imoStr} (JSON)`);
       return data;
     } catch (parseErr) {
-      console.error(`Error parsing recommendations JSON for IMO ${imoStr}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
-      console.error('Response preview:', raw.substring(0, 200));
-      return null;
+      // If not valid JSON, treat as markdown/text payload
+      console.warn(`Recommendations for IMO ${imoStr} are not valid JSON, treating as raw text`);
+      return { rawText: raw };
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

@@ -37,6 +37,16 @@ async function sendWhatsAppMessage(toNumber, body) {
 }
 
 function summarizeRecommendations(data) {
+  // If we only have raw text/markdown, we can't reliably count categories here
+  if (data && typeof data.rawText === 'string') {
+    return {
+      total: 0,
+      critical: 0,
+      moderate: 0,
+      recommended: 0,
+    };
+  }
+
   const list =
     data?.recommendations ||
     data?.data ||
