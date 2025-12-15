@@ -1,10 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 
-// Cache for loaded vessel data
-/** @type {Array<{name: string, imo: string}> | null} */
-let vesselCache = null;
-
 // Built-in fallback mappings so Netlify bundle works even without CSV
 // Keep this small; extend with env var VESSEL_MAPPINGS_JSON if needed.
 const DEFAULT_VESSELS = [
@@ -13,6 +9,19 @@ const DEFAULT_VESSELS = [
   { name: 'GCL GANGA', imo: '9481697' },
   { name: 'GCL SABARMATI', imo: '9481661' },
 ];
+
+// Attempt to inline/bundle the full mappings JSON
+let BUILT_IN_VESSELS = null;
+try {
+  // This require will get bundled by esbuild if the file exists
+  BUILT_IN_VESSELS = require('../data/vessel-mappings.json');
+} catch (_e) {
+  BUILT_IN_VESSELS = null;
+}
+
+// Cache for loaded vessel data
+/** @type {Array<{name: string, imo: string}> | null} */
+let vesselCache = null;
 
 /**
  * Load and parse the vessel mappings CSV file
@@ -43,25 +52,16 @@ function loadVesselMappings() {
     }
   }
 
-  // 2) Try JSON file (more reliable bundling than CSV)
-  const jsonPath = path.join(__dirname, '..', 'data', 'vessel-mappings.json');
-  if (fs.existsSync(jsonPath)) {
-    try {
-      const jsonContent = fs.readFileSync(jsonPath, 'utf8');
-      const parsed = JSON.parse(jsonContent);
-      if (Array.isArray(parsed)) {
-        vesselCache = parsed
-          .filter(v => v && v.name && v.imo)
-          .map(v => ({
-            name: String(v.name).trim(),
-            imo: String(v.imo).trim(),
-          }));
-        console.log('Vessel mappings loaded from vessel-mappings.json');
-        return vesselCache;
-      }
-    } catch (err) {
-      console.warn('Warning: failed to load vessel-mappings.json:', err);
-    }
+  // 2) Try bundled JSON (required above)
+  if (Array.isArray(BUILT_IN_VESSELS)) {
+    vesselCache = BUILT_IN_VESSELS
+      .filter(v => v && v.name && v.imo)
+      .map(v => ({
+        name: String(v.name).trim(),
+        imo: String(v.imo).trim().replace(/\r$/, ''),
+      }));
+    console.log('Vessel mappings loaded from bundled vessel-mappings.json');
+    return vesselCache;
   }
 
   // 3) Fallback defaults (small)
