@@ -37,16 +37,6 @@ async function sendWhatsAppMessage(toNumber, body) {
 }
 
 function summarizeRecommendations(data) {
-  // If we only have raw text/markdown, we can't reliably count categories here
-  if (data && typeof data.rawText === 'string') {
-    return {
-      total: 0,
-      critical: 0,
-      moderate: 0,
-      recommended: 0,
-    };
-  }
-
   const list =
     data?.recommendations ||
     data?.data ||
@@ -96,8 +86,8 @@ exports.handler = async (event) => {
     const vesselName = lookup?.name || vesselIdentifier;
 
     // Fetch recommendations (may be slow)
-    // Allow longer timeout here (background), default to 30s
-    const recData = await apiClient.fetchRecommendations(imo, { timeoutMs: 30000 });
+    // Allow longer timeout here (background), e.g. 2 minutes
+    const recData = await apiClient.fetchRecommendations(imo, { timeoutMs: 120000 });
 
     if (!recData) {
       await sendWhatsAppMessage(
@@ -107,14 +97,24 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: 'Done' };
     }
 
-    const summary = summarizeRecommendations(recData);
-    const msg =
-      `📋 Recommendations for ${vesselName} (IMO ${imo})\n` +
-      `Total: ${summary.total}\n` +
-      `• Critical: ${summary.critical}\n` +
-      `• Moderate: ${summary.moderate}\n` +
-      `• Recommended: ${summary.recommended}\n\n` +
-      `Reply "1" to get the Excel file or "2" for email.`;
+    let msg;
+    if (typeof recData.rawText === 'string') {
+      const header = `📋 Recommendations for ${vesselName} (IMO ${imo})\n\n`;
+      const maxLen = 5000;
+      let body = recData.rawText.trim();
+      if (body.length > maxLen) {
+        body = body.slice(0, maxLen) + '\n\n...[truncated]';
+      }
+      msg = header + body;
+    } else {
+      const summary = summarizeRecommendations(recData);
+      msg =
+        `📋 Recommendations for ${vesselName} (IMO ${imo})\n` +
+        `Total: ${summary.total}\n` +
+        `• Critical: ${summary.critical}\n` +
+        `• Moderate: ${summary.moderate}\n` +
+        `• Recommended: ${summary.recommended}\n`;
+    }
 
     await sendWhatsAppMessage(fromNumber, msg);
 

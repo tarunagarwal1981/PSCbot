@@ -850,177 +850,14 @@ async function handleRiskLevelIntent(vesselIdentifier, fromNumber) {
  */
 async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
   try {
-    log('info', 'Processing recommendations intent', { phoneNumber: fromNumber, vesselIdentifier });
-    
-    // 1. Resolve vessel identifier to IMO using vessel-lookup
-    let vesselLookupResult = null;
-    let imo = null;
-    let vesselName = null;
+    log('info', 'Processing recommendations intent (async worker)', { phoneNumber: fromNumber, vesselIdentifier });
 
-    // Check if identifier is an IMO (numeric)
-    if (/^\d+$/.test(vesselIdentifier.trim())) {
-      // It's an IMO number
-      imo = vesselIdentifier.trim();
-      vesselLookupResult = vesselLookup.getVesselByIMO(imo);
-      if (vesselLookupResult) {
-        vesselName = vesselLookupResult.name;
-      }
-    } else {
-      // It's a vessel name - look it up
-      vesselLookupResult = vesselLookup.getVesselByName(vesselIdentifier);
-      if (vesselLookupResult) {
-        imo = vesselLookupResult.imo;
-        vesselName = vesselLookupResult.name;
-      }
-    }
+    // Fire-and-forget background worker; don't block webhook
+    triggerRecommendationsWorker(fromNumber, vesselIdentifier);
 
-    if (!imo) {
-      log('warn', 'Vessel not found in lookup', { phoneNumber: fromNumber, vesselIdentifier });
-      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
-    }
-
-    // 2. Fetch vessel data from dashboard API
-    let vesselData;
-    try {
-      vesselData = await apiClient.fetchVesselByName(vesselName || vesselIdentifier);
-    } catch (apiError) {
-      log('error', 'Dashboard API failed', { 
-        phoneNumber: fromNumber, 
-        vesselName: vesselName || vesselIdentifier,
-        error: apiError instanceof Error ? apiError.message : String(apiError)
-      });
-      return xmlResponse(generateTwiMLResponse(
-        'Sorry, I\'m having trouble accessing vessel data right now. Please try again in a moment.'
-      ));
-    }
-    
-    if (!vesselData) {
-      log('warn', 'Vessel data not found in API', { phoneNumber: fromNumber, vesselName: vesselName || vesselIdentifier });
-      return xmlResponse(generateTwiMLResponse(createVesselNotFoundMessage(vesselIdentifier)));
-    }
-
-    log('info', 'Vessel data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
-
-    // 3. Fetch detailed recommendations from recommendations API
-    let recommendationsData;
-    try {
-      recommendationsData = await apiClient.fetchRecommendations(imo);
-    } catch (apiError) {
-      log('error', 'Recommendations API failed', { 
-        phoneNumber: fromNumber, 
-        imo,
-        vesselName,
-        error: apiError instanceof Error ? apiError.message : String(apiError)
-      });
-      return xmlResponse(generateTwiMLResponse(
-        'I found the vessel but couldn\'t retrieve recommendations. Please try again.'
-      ));
-    }
-    
-    if (!recommendationsData) {
-      log('warn', 'Recommendations data not found', { phoneNumber: fromNumber, imo, vesselName });
-      // Fall back to background worker to avoid blocking webhook
-      await triggerRecommendationsWorker(fromNumber, vesselName || vesselIdentifier, imo);
-      return xmlResponse(generateTwiMLResponse(
-        `📋 I’m preparing recommendations for ${vesselName || vesselIdentifier}. I’ll send them shortly.`
-      ));
-    }
-
-    log('info', 'Recommendations data fetched successfully', { phoneNumber: fromNumber, vesselName, imo });
-
-    // 4. Call Claude API with recommendationsSummary prompt
-    const prompt = systemPrompts.recommendationsSummary(recommendationsData);
-    
-    const payload = {
-      model: CLAUDE_MODEL,
-      max_tokens: 200,
-      temperature: 0,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    };
-
-    const resp = await fetch(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: anthropicHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      log('warn', 'Anthropic API error, using fallback summary', { 
-        phoneNumber: fromNumber, 
-        status: resp.status,
-        vesselName 
-      });
-      // Fallback: create simple summary if Claude fails
-      const recommendations = recommendationsData?.recommendations || recommendationsData?.data || [];
-      const critical = Array.isArray(recommendations) ? recommendations.filter((/** @type {any} */ r) => 
-        (r.priority || r.severity || '').toUpperCase() === 'CRITICAL' || 
-        (r.priority || r.severity || '').toUpperCase() === 'HIGH'
-      ).length : 0;
-      const moderate = Array.isArray(recommendations) ? recommendations.filter((/** @type {any} */ r) => 
-        (r.priority || r.severity || '').toUpperCase() === 'MODERATE' || 
-        (r.priority || r.severity || '').toUpperCase() === 'MEDIUM'
-      ).length : 0;
-      const recommended = Array.isArray(recommendations) ? recommendations.filter((/** @type {any} */ r) => 
-        (r.priority || r.severity || '').toUpperCase() === 'RECOMMENDED' || 
-        (r.priority || r.severity || '').toUpperCase() === 'LOW'
-      ).length : 0;
-      
-      const summary = `📋 Found ${recommendations.length} recommendations:\n` +
-        `• ${critical} critical\n` +
-        `• ${moderate} moderate\n` +
-        `• ${recommended} recommended`;
-      
-      const message = `📋 *Recommendations for ${vesselName || vesselIdentifier}*\n\n${summary}\n\n` +
-        `How would you like to receive this?\n\n` +
-        `1️⃣ Download Excel file\n` +
-        `2️⃣ Email to your registered address\n\n` +
-        `Reply with '1' or '2'`;
-      
-      // Save state with timestamp
-      stateManager.saveState(fromNumber, {
-        intent: 'recommendations',
-        vesselName: vesselName || vesselIdentifier,
-        vesselIMO: imo,
-        vesselData: vesselData,
-        recommendationsData: recommendationsData,
-        timestamp: Date.now(),
-      });
-      
-      log('info', 'State saved for recommendations follow-up', { phoneNumber: fromNumber, vesselName });
-      
-      return xmlResponse(generateTwiMLResponse(message));
-    }
-
-    const data = await resp.json();
-    const summary = (data?.content?.[0]?.text || '').trim();
-
-    // 5. Create response message
-    const message = `📋 *Recommendations for ${vesselName || vesselIdentifier}*\n\n${summary}\n\n` +
-      `How would you like to receive this?\n\n` +
-      `1️⃣ Download Excel file\n` +
-      `2️⃣ Email to your registered address\n\n` +
-      `Reply with '1' or '2'`;
-
-    // 6. Save state with all data for follow-up (Excel/Email)
-    stateManager.saveState(fromNumber, {
-      intent: 'recommendations',
-      vesselName: vesselName || vesselIdentifier,
-      vesselIMO: imo,
-      vesselData: vesselData,
-      recommendationsData: recommendationsData,
-      timestamp: Date.now(),
-    });
-
-    log('info', 'State saved for recommendations follow-up', { phoneNumber: fromNumber, vesselName });
-
-    // 7. Return TwiML response
-    return xmlResponse(generateTwiMLResponse(message));
+    return xmlResponse(generateTwiMLResponse(
+      `📋 I’m preparing recommendations for ${vesselIdentifier}. I’ll send them shortly as a separate message.`
+    ));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log('error', 'Error in handleRecommendationsIntent', { 
@@ -1392,7 +1229,7 @@ function formatRecommendationsDirectly(vesselData) {
  * @param {string} fromNumber
  * @param {string} vesselIdentifier
  */
-async function triggerRecommendationsWorker(fromNumber, vesselIdentifier) {
+function triggerRecommendationsWorker(fromNumber, vesselIdentifier) {
   try {
     const baseUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL;
     if (!baseUrl) {
@@ -1400,15 +1237,14 @@ async function triggerRecommendationsWorker(fromNumber, vesselIdentifier) {
       return;
     }
     const workerUrl = `${baseUrl}/.netlify/functions/recommendations-worker`;
-    const resp = await fetch(workerUrl, {
+    // Fire-and-forget; we don't await this in the webhook
+    fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fromNumber, vesselIdentifier }),
+    }).catch(err => {
+      console.error('Failed to trigger recommendations worker', err);
     });
-    if (!resp.ok) {
-      const text = await resp.text();
-      console.error('Failed to trigger recommendations worker', resp.status, text.substring(0, 200));
-    }
   } catch (err) {
     console.error('Error triggering recommendations worker', err);
   }
