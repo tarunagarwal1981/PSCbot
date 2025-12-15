@@ -39,7 +39,24 @@ function loadVesselMappings() {
     }
   }
 
-  // 2) Try CSV from repo
+  // 2) Try JSON file (more reliable bundling than CSV)
+  const jsonPath = path.join(__dirname, '..', 'data', 'vessel-mappings.json');
+  if (fs.existsSync(jsonPath)) {
+    try {
+      const jsonContent = fs.readFileSync(jsonPath, 'utf8');
+      const parsed = JSON.parse(jsonContent);
+      if (Array.isArray(parsed)) {
+        vesselCache = parsed
+          .filter(v => v && v.name && v.imo)
+          .map(v => ({ name: String(v.name), imo: String(v.imo) }));
+        return vesselCache;
+      }
+    } catch (err) {
+      console.warn('Warning: failed to load vessel-mappings.json:', err);
+    }
+  }
+
+  // 3) Try CSV from repo
   const csvPath = path.join(__dirname, '..', 'data', 'vessel-mappings.csv');
   
   if (!fs.existsSync(csvPath)) {
