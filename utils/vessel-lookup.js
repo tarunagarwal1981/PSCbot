@@ -5,6 +5,15 @@ const path = require('path');
 /** @type {Array<{name: string, imo: string}> | null} */
 let vesselCache = null;
 
+// Built-in fallback mappings so Netlify bundle works even without CSV
+// Keep this small; extend with env var VESSEL_MAPPINGS_JSON if needed.
+const DEFAULT_VESSELS = [
+  { name: 'GCL YAMUNA', imo: '9481219' },
+  { name: 'GCL TAPI', imo: '9481659' },
+  { name: 'GCL GANGA', imo: '9481697' },
+  { name: 'GCL SABARMATI', imo: '9481661' },
+];
+
 /**
  * Load and parse the vessel mappings CSV file
  * @returns {Array<{name: string, imo: string}>}
@@ -14,11 +23,28 @@ function loadVesselMappings() {
     return vesselCache;
   }
 
+  // 1) Allow override via env var JSON to avoid packaging issues
+  const envJson = process.env.VESSEL_MAPPINGS_JSON;
+  if (envJson) {
+    try {
+      const parsed = JSON.parse(envJson);
+      if (Array.isArray(parsed)) {
+        vesselCache = parsed
+          .filter(v => v && v.name && v.imo)
+          .map(v => ({ name: String(v.name), imo: String(v.imo) }));
+        return vesselCache;
+      }
+    } catch (err) {
+      console.warn('Warning: failed to parse VESSEL_MAPPINGS_JSON env var:', err);
+    }
+  }
+
+  // 2) Try CSV from repo
   const csvPath = path.join(__dirname, '..', 'data', 'vessel-mappings.csv');
   
   if (!fs.existsSync(csvPath)) {
-    console.warn(`Warning: Vessel mappings file not found at ${csvPath}`);
-    vesselCache = [];
+    console.warn(`Warning: Vessel mappings file not found at ${csvPath}, using default list`);
+    vesselCache = DEFAULT_VESSELS;
     return vesselCache;
   }
 
