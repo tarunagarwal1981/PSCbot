@@ -412,8 +412,16 @@ async function processNewQuery(userMessage, fromNumber) {
       return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
-    // Validate vessel identifier
-    if (!vessel_identifier) {
+    // Validate vessel identifier (with fallback for recommendations)
+    let resolvedIdentifier = vessel_identifier;
+    if (!resolvedIdentifier && intent === 'recommendations') {
+      resolvedIdentifier = fallbackVesselIdentifier(userMessage);
+      if (resolvedIdentifier) {
+        log('info', 'Fallback vessel identifier resolved', { phoneNumber: fromNumber, resolvedIdentifier });
+      }
+    }
+
+    if (!resolvedIdentifier) {
       log('warn', 'Missing vessel identifier', { phoneNumber: fromNumber, intent });
       return xmlResponse(generateTwiMLResponse(
         'I need a vessel name or IMO number to help you.\n\n' +
@@ -425,17 +433,17 @@ async function processNewQuery(userMessage, fromNumber) {
     // Route to appropriate handler based on intent
     switch (intent) {
       case 'risk_score':
-        return await handleRiskScoreIntent(vessel_identifier, fromNumber);
+        return await handleRiskScoreIntent(resolvedIdentifier, fromNumber);
       
       case 'risk_level':
-        return await handleRiskLevelIntent(vessel_identifier, fromNumber);
+        return await handleRiskLevelIntent(resolvedIdentifier, fromNumber);
       
       case 'recommendations':
-        return await handleRecommendationsIntent(vessel_identifier, fromNumber);
+        return await handleRecommendationsIntent(resolvedIdentifier, fromNumber);
       
       case 'vessel_info':
         // TODO: Implement handleVesselInfoIntent
-        return await handleVesselInfoIntent(vessel_identifier, fromNumber);
+        return await handleVesselInfoIntent(resolvedIdentifier, fromNumber);
       
       default:
         return xmlResponse(generateTwiMLResponse(
@@ -1646,5 +1654,26 @@ function anthropicHeaders() {
     log('error', 'ANTHROPIC_API_KEY is not set in environment variables');
   }
   return headers;
+}
+
+/**
+ * Best-effort vessel identifier extraction when LLM returns null
+ * @param {string} userMessage
+ */
+function fallbackVesselIdentifier(userMessage) {
+  if (!userMessage) return null;
+  const cleaned = userMessage
+    .toLowerCase()
+    .replace(/^recommendations?\s+for\s+/i, '')
+    .replace(/^recs?\s+for\s+/i, '')
+    .replace(/^risk\s+(score|level)\s+for\s+/i, '')
+    .replace(/^risk\s+for\s+/i, '')
+    .trim();
+  if (!cleaned) return null;
+  const match = vesselLookup.getVesselByName(cleaned);
+  if (match) {
+    return match.name;
+  }
+  return null;
 }
 
