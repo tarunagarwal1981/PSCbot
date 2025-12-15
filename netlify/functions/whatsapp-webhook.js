@@ -352,14 +352,24 @@ async function processNewQuery(userMessage, fromNumber) {
       const text = await resp.text();
       log('error', 'Anthropic API error', { 
         phoneNumber: fromNumber, 
-        status: resp.status, 
-        response: text.substring(0, 200) 
+        status: resp.status,
+        statusText: resp.statusText,
+        response: text.substring(0, 500) 
       });
+      // Log full error for debugging
+      console.error('Full Anthropic API error response:', text);
       return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
     const data = await resp.json();
     const contentText = (data?.content?.[0]?.text || '').trim();
+    
+    // Log the raw response for debugging
+    log('info', 'Anthropic API response received', {
+      phoneNumber: fromNumber,
+      responseLength: contentText.length,
+      responsePreview: contentText.substring(0, 200)
+    });
 
     // Parse JSON response
     let intentResult;
@@ -375,8 +385,11 @@ async function processNewQuery(userMessage, fromNumber) {
       log('error', 'Failed to parse intent detection response', { 
         phoneNumber: fromNumber, 
         parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
-        responseText: contentText.substring(0, 200)
+        responseText: contentText.substring(0, 500),
+        fullResponse: contentText
       });
+      // Log full response for debugging
+      console.error('Full content text that failed to parse:', contentText);
       return xmlResponse(generateTwiMLResponse(createUnclearIntentMessage()));
     }
 
@@ -1596,8 +1609,11 @@ function anthropicHeaders() {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
   };
-  if (process.env.ANTHROPIC_API_KEY) {
-    headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (apiKey) {
+    headers['x-api-key'] = apiKey;
+  } else {
+    log('error', 'ANTHROPIC_API_KEY is not set in environment variables');
   }
   return headers;
 }
