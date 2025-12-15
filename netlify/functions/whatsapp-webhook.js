@@ -10,8 +10,6 @@ const vesselLookup = require('../../utils/vessel-lookup');
 
 // Import Excel generation function
 const { generateExcelFile } = require('./generate-excel');
-const fetch = require('node-fetch');
-
 const TEMP_DIR = '/tmp';
 
 // Phone number to email mapping (for testing/demo purposes)
