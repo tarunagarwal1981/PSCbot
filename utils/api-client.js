@@ -1,12 +1,17 @@
 const fetch = require('node-fetch');
+// node-fetch v2 doesn't export AbortController; use the standalone polyfill
+const AbortController = require('abort-controller');
 const { getVesselByName, getVesselByIMO } = require('./vessel-lookup');
 
-// API Endpoints
-const DASHBOARD_API = 'https://psc.ocean-eye.io/api/v1/vessels/dashboard/';
-const RECOMMENDATIONS_API = 'https://psc.ocean-eye.io/api/v1/vessels/{IMO}/amsa/recommendations';
+// API Endpoints (allow override via env)
+const DASHBOARD_API = process.env.DASHBOARD_API_URL || 'https://psc.ocean-eye.io/api/v1/vessels/dashboard/';
+const RECOMMENDATIONS_API =
+  process.env.RECOMMENDATIONS_API_URL ||
+  'https://psc.ocean-eye.io/api/v1/vessels/{IMO}/amsa/recommendations';
 
 // Cache configuration
 const CACHE_DURATION_MS = 3600000; // 1 hour
+const RECOMMENDATIONS_TIMEOUT_MS = 8000; // 8s timeout to avoid webhook overrun
 
 // In-memory cache for dashboard data
 /** @type {{ data: any, timestamp: number } | null} */
@@ -171,6 +176,9 @@ async function fetchRecommendations(imo) {
   }
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RECOMMENDATIONS_TIMEOUT_MS);
+
     // Replace {IMO} placeholder in URL
     const url = RECOMMENDATIONS_API.replace('{IMO}', imoStr);
     
@@ -181,7 +189,10 @@ async function fetchRecommendations(imo) {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -191,9 +202,18 @@ async function fetchRecommendations(imo) {
       throw new Error(`Recommendations API returned status ${response.status}: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    console.log(`Recommendations fetched successfully for IMO ${imoStr}`);
-    return data;
+    const raw = await response.text();
+    try {
+      // Some responses contain leading commented lines (starting with '#')
+      const cleaned = raw.replace(/^#[^\n]*\n/gm, '').trim();
+      const data = JSON.parse(cleaned);
+      console.log(`Recommendations fetched successfully for IMO ${imoStr}`);
+      return data;
+    } catch (parseErr) {
+      console.error(`Error parsing recommendations JSON for IMO ${imoStr}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+      console.error('Response preview:', raw.substring(0, 200));
+      return null;
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error fetching recommendations for IMO ${imoStr}:`, errorMessage);

@@ -913,7 +913,7 @@ async function handleRecommendationsIntent(vesselIdentifier, fromNumber) {
     if (!recommendationsData) {
       log('warn', 'Recommendations data not found', { phoneNumber: fromNumber, imo, vesselName });
       return xmlResponse(generateTwiMLResponse(
-        'I found the vessel but couldn\'t retrieve recommendations. Please try again.'
+        'I found the vessel but the recommendations feed is unavailable right now. Please try again later.'
       ));
     }
 
